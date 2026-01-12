@@ -1,0 +1,129 @@
+#pragma once
+#include <Arduino.h>
+#include <LittleFS.h>
+#include <cmath>
+
+struct PolarCord_t {
+  double theta;
+  double rho;
+
+  String getStr() const {
+    return "T:" + String(theta) + "|R:" + String(rho);
+  }
+
+  bool isNan() {
+    return (std::isnan(theta) && std::isnan(rho));
+  }
+PolarCord_t operator - (PolarCord_t other) {
+    return {theta - other.theta, rho - other.rho};
+  }
+
+  bool operator == (PolarCord_t other) {
+    return (theta == other.theta) && (rho == other.rho);
+  }
+
+  PolarCord_t operator * (double mult) {
+    return {theta * mult, rho * mult};
+  }
+
+  PolarCord_t operator + (PolarCord_t other) {
+    return {theta + other.theta, rho + other.rho};
+  }
+
+  PolarCord_t operator / (double div) {
+    return {theta / div, rho / div};
+  }
+  PolarCord_t operator / (int div) {
+    return {theta / div, rho / div};
+  }
+};
+
+class PosGen {
+  public:
+    virtual PolarCord_t getNextPos() = 0;
+};
+
+class FilePosGen : public PosGen {
+  public:
+    ~FilePosGen() {
+      if (m_file)
+        m_file.close();
+    }
+
+    FilePosGen(String filePath, double maxRho = 450.0) :
+      m_currFile(filePath),
+      m_maxRho(maxRho),
+      m_file(LittleFS.open(filePath, "r"))
+    {
+      if (!m_file) {
+        Serial.print("ERROR: Could not open file: ");
+        Serial.println(filePath);
+      } else {
+        Serial.print("Opened file: ");
+        Serial.print(filePath);
+        Serial.print(" (Size: ");
+        Serial.print(m_file.size());
+        Serial.println(" bytes)");
+      }
+    }
+
+    PolarCord_t getNextPos() override {
+      if (!m_file || !m_file.available()) {
+        if (m_file) {
+          m_file.close();
+          Serial.println("End of file reached");
+        }
+        return {std::nan(""), std::nan("")};
+      }
+
+      // Read a line from the file
+      String line = m_file.readStringUntil('\n');
+      line.trim();
+      m_currLine++;
+
+      // Skip empty lines and comments
+      if (line.length() == 0 || line.startsWith("#") || line.startsWith("//")) {
+        return getNextPos();  // Recursively get next valid line
+      }
+
+      // Parse the line: expected format "theta rho" or "theta,rho"
+      double theta = 0.0;
+      double rho = 0.0;
+
+      int separatorIndex = line.indexOf(',');
+      if (separatorIndex == -1) {
+        separatorIndex = line.indexOf(' ');
+      }
+      if (separatorIndex == -1) {
+        separatorIndex = line.indexOf('\t');
+      }
+
+      if (separatorIndex != -1) {
+        // Found separator
+        String thetaStr = line.substring(0, separatorIndex);
+        String rhoStr = line.substring(separatorIndex + 1);
+        thetaStr.trim();
+        rhoStr.trim();
+
+        theta = thetaStr.toDouble();
+        rho = rhoStr.toDouble();
+
+        // Scale rho from 0-1 range to 0-maxRho
+        rho = rho * m_maxRho;
+
+        return {theta, rho};
+      } else {
+        Serial.print("ERROR: Invalid line format at line ");
+        Serial.print(m_currLine);
+        Serial.print(": ");
+        Serial.println(line);
+        return getNextPos();  // Skip invalid line
+      }
+    }
+
+  private:
+    int    m_currLine = 0;
+    String m_currFile = "";
+    double m_maxRho;
+    File   m_file;
+};

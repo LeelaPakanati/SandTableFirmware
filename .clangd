@@ -1,0 +1,13 @@
+CompileFlags:
+  Remove:
+    - '-fno-tree-switch-conversion'
+    - '-mlongcalls'
+    - '-mtext-section-literals'
+    - '-fstrict-volatile-bitfields'
+    - '-march=*'
+    - '-mabi=*'
+    - '-mcpu=*'
+  Add:
+    # Optional: Suppress warnings about unknown warning flags themselves
+    - '-Wno-unknown-warning-option'
+

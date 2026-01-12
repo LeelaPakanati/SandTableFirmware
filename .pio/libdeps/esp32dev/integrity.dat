@@ -1,0 +1,6 @@
+gin66/FastAccelStepper
+tzapu/WiFiManager @ ^2.0.17
+https://github.com/me-no-dev/AsyncTCP.git
+https://github.com/me-no-dev/ESPAsyncWebServer.git
+teemuatlut/TMCStepper @ ^0.7.3
+bblanchon/ArduinoJson @ ^7.2.1
