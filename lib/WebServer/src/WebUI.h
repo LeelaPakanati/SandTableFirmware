@@ -310,6 +310,15 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             opacity: 0.6;
             pointer-events: none;
         }
+
+        .viewer-canvas {
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            background: #f7fafc;
+        }
     </style>
 </head>
 <body>
@@ -338,10 +347,21 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     <div class="status-value" id="uptime">0s</div>
                 </div>
             </div>
-        </div>
+         </div>
 
-        <div class="card">
-            <h2>LED Brightness</h2>
+         <div class="card">
+             <h2>Position Viewer</h2>
+             <canvas id="position-canvas" class="viewer-canvas" width="400" height="400"></canvas>
+             <div style="text-align: center; margin-top: 12px;">
+                 <div style="font-size: 0.875em; color: #718096;">Live view of ball position and path</div>
+                 <div id="position-coords" style="margin-top: 8px; font-family: monospace; font-size: 0.9em; color: #2d3748;">
+                     Position: Loading...
+                 </div>
+             </div>
+         </div>
+
+         <div class="card">
+             <h2>LED Brightness</h2>
             <div class="slider-container">
                 <div class="slider-label">
                     <span>Brightness</span>
@@ -466,15 +486,27 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             constructor() {
                 this.apiBase = '/api';
                 this.statusInterval = null;
+                this.positionInterval = null;
+                this.canvas = null;
+                this.ctx = null;
                 this.init();
             }
 
             async init() {
+                this.setupCanvas();
                 this.setupEventListeners();
                 await this.loadFileList();
                 await this.loadSystemInfo();
                 await this.loadPlaylistStatus();
                 this.startStatusPolling();
+                this.startPositionPolling();
+            }
+
+            setupCanvas() {
+                this.canvas = document.getElementById('position-canvas');
+                this.ctx = this.canvas.getContext('2d');
+                // Initial draw of table
+                this.drawTable();
             }
 
             setupEventListeners() {
@@ -544,6 +576,98 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             async getStatus() {
                 const response = await fetch(this.apiBase + '/status');
                 return await response.json();
+            }
+
+            async getPosition() {
+                const response = await fetch(this.apiBase + '/position');
+                return await response.json();
+            }
+
+            drawTable() {
+                const ctx = this.ctx;
+                const centerX = this.canvas.width / 2;
+                const centerY = this.canvas.height / 2;
+                const radius = Math.min(centerX, centerY) - 20;
+
+                // Clear canvas
+                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Draw table circle
+                ctx.strokeStyle = '#cbd5e0';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+                ctx.stroke();
+
+                // Draw center point
+                ctx.fillStyle = '#cbd5e0';
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+
+            drawPosition(data) {
+                this.drawTable();
+
+                const ctx = this.ctx;
+                const centerX = this.canvas.width / 2;
+                const centerY = this.canvas.height / 2;
+                const radius = Math.min(centerX, centerY) - 20;
+
+                // Draw path
+                if (data.path && data.path.length > 1) {
+                    ctx.strokeStyle = '#667eea';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    for (let i = 0; i < data.path.length; i++) {
+                        const point = data.path[i];
+                        const x = centerX + (point.x - 0.5) * 2 * radius;
+                        const y = centerY + (point.y - 0.5) * 2 * radius;
+                        if (i === 0) {
+                            ctx.moveTo(x, y);
+                        } else {
+                            ctx.lineTo(x, y);
+                        }
+                    }
+                    ctx.stroke();
+                }
+
+                // Draw current position
+                if (data.current) {
+                    const x = centerX + (data.current.x - 0.5) * 2 * radius;
+                    const y = centerY + (data.current.y - 0.5) * 2 * radius;
+
+                    ctx.fillStyle = '#48bb78';
+                    ctx.beginPath();
+                    ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                    ctx.fill();
+
+                    // Draw ball outline
+                    ctx.strokeStyle = '#38a169';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Update coordinate display
+                    const coordsElement = document.getElementById('position-coords');
+                    const rho = data.current.rho.toFixed(1);
+                    const theta = (data.current.theta * 180 / Math.PI).toFixed(1);
+                    const cartX = ((data.current.x - 0.5) * 2 * 450).toFixed(1); // Convert back to mm from center
+                    const cartY = ((data.current.y - 0.5) * 2 * 450).toFixed(1);
+                    coordsElement.textContent = `ρ: ${rho}mm, θ: ${theta}°, X: ${cartX}mm, Y: ${cartY}mm`;
+                } else {
+                    document.getElementById('position-coords').textContent = 'Position: Not available';
+                }
+            }
+
+            startPositionPolling() {
+                this.positionInterval = setInterval(async () => {
+                    try {
+                        const position = await this.getPosition();
+                        this.drawPosition(position);
+                    } catch (error) {
+                        // Silently handle errors to avoid console spam
+                    }
+                }, 200); // Update 5 times per second
             }
 
             async startPattern() {

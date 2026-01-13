@@ -1,5 +1,5 @@
 #include "PlaylistManager.hpp"
-#include <LittleFS.h>
+#include <SDCard.hpp>
 #include <ArduinoJson.h>
 
 PlaylistManager::PlaylistManager()
@@ -211,15 +211,14 @@ bool PlaylistManager::saveToFile(String playlistName) {
     }
 
     // Ensure playlist directory exists
-    if (!LittleFS.exists("/playlists")) {
-        LittleFS.mkdir("/playlists");
+    if (!SD.exists("/playlists")) {
+        SD.mkdir("/playlists");
     }
 
     // Save to file
     String filepath = "/playlists/" + playlistName + ".json";
-    File file = LittleFS.open(filepath, "w");
-
-    if (!file) {
+    FsFile file;
+    if (!file.open(filepath.c_str(), O_WRONLY | O_CREAT | O_TRUNC)) {
         Serial.println("Failed to create playlist file");
         return false;
     }
@@ -238,13 +237,13 @@ bool PlaylistManager::saveToFile(String playlistName) {
 bool PlaylistManager::loadFromFile(String playlistName) {
     String filepath = "/playlists/" + playlistName + ".json";
 
-    if (!LittleFS.exists(filepath)) {
+    if (!SD.exists(filepath.c_str())) {
         Serial.println("Playlist file not found: " + filepath);
         return false;
     }
 
-    File file = LittleFS.open(filepath, "r");
-    if (!file) {
+    FsFile file;
+    if (!file.open(filepath.c_str(), O_RDONLY)) {
         Serial.println("Failed to open playlist file");
         return false;
     }

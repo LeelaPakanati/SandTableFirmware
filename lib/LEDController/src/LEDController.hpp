@@ -3,7 +3,7 @@
 
 class LEDController {
 public:
-    LEDController(uint8_t pin = 18);
+    LEDController(uint8_t pin = 2);
     void begin();
     void setBrightness(uint8_t brightness); // 0-255
     uint8_t getBrightness();

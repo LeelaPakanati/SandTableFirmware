@@ -5,7 +5,7 @@
 #include <LEDController.hpp>
 #include <ClearingPatternGen.hpp>
 #include <PlaylistManager.hpp>
-#include <LittleFS.h>
+#include <SDCard.hpp>
 #include <vector>
 
 class SisyphusWebServer {
@@ -32,7 +32,7 @@ private:
     bool m_playlistMode;
 
     // File upload handling
-    File m_uploadFile;
+    FsFile m_uploadFile;
 
     // Path history for viewer (stores points as x,y in normalized 0-1 range)
     static constexpr int MAX_PATH_POINTS = 500;

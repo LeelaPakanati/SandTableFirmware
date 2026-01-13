@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include <LittleFS.h>
+#include <SDCard.hpp>
 #include <cmath>
 
 struct PolarCord_t {
@@ -14,7 +14,8 @@ struct PolarCord_t {
   bool isNan() {
     return (std::isnan(theta) && std::isnan(rho));
   }
-PolarCord_t operator - (PolarCord_t other) {
+
+  PolarCord_t operator - (PolarCord_t other) {
     return {theta - other.theta, rho - other.rho};
   }
 
@@ -33,6 +34,7 @@ PolarCord_t operator - (PolarCord_t other) {
   PolarCord_t operator / (double div) {
     return {theta / div, rho / div};
   }
+
   PolarCord_t operator / (int div) {
     return {theta / div, rho / div};
   }
@@ -40,36 +42,37 @@ PolarCord_t operator - (PolarCord_t other) {
 
 class PosGen {
   public:
+    virtual ~PosGen() = default;
     virtual PolarCord_t getNextPos() = 0;
 };
 
 class FilePosGen : public PosGen {
   public:
     ~FilePosGen() {
-      if (m_file)
+      if (m_file.isOpen()) {
         m_file.close();
+      }
     }
 
     FilePosGen(String filePath, double maxRho = 450.0) :
       m_currFile(filePath),
-      m_maxRho(maxRho),
-      m_file(LittleFS.open(filePath, "r"))
+      m_maxRho(maxRho)
     {
-      if (!m_file) {
+      if (!m_file.open(filePath.c_str(), O_RDONLY)) {
         Serial.print("ERROR: Could not open file: ");
         Serial.println(filePath);
       } else {
         Serial.print("Opened file: ");
         Serial.print(filePath);
         Serial.print(" (Size: ");
-        Serial.print(m_file.size());
+        Serial.print(m_file.fileSize());
         Serial.println(" bytes)");
       }
     }
 
     PolarCord_t getNextPos() override {
-      if (!m_file || !m_file.available()) {
-        if (m_file) {
+      if (!m_file.isOpen() || !m_file.available()) {
+        if (m_file.isOpen()) {
           m_file.close();
           Serial.println("End of file reached");
         }
@@ -77,13 +80,19 @@ class FilePosGen : public PosGen {
       }
 
       // Read a line from the file
-      String line = m_file.readStringUntil('\n');
+      char lineBuffer[256];
+      int len = m_file.fgets(lineBuffer, sizeof(lineBuffer));
+      if (len <= 0) {
+        return {std::nan(""), std::nan("")};
+      }
+
+      String line = String(lineBuffer);
       line.trim();
       m_currLine++;
 
       // Skip empty lines and comments
       if (line.length() == 0 || line.startsWith("#") || line.startsWith("//")) {
-        return getNextPos();  // Recursively get next valid line
+        return getNextPos();
       }
 
       // Parse the line: expected format "theta rho" or "theta,rho"
@@ -99,7 +108,6 @@ class FilePosGen : public PosGen {
       }
 
       if (separatorIndex != -1) {
-        // Found separator
         String thetaStr = line.substring(0, separatorIndex);
         String rhoStr = line.substring(separatorIndex + 1);
         thetaStr.trim();
@@ -117,13 +125,13 @@ class FilePosGen : public PosGen {
         Serial.print(m_currLine);
         Serial.print(": ");
         Serial.println(line);
-        return getNextPos();  // Skip invalid line
+        return getNextPos();
       }
     }
 
   private:
-    int    m_currLine = 0;
+    int m_currLine = 0;
     String m_currFile = "";
     double m_maxRho;
-    File   m_file;
+    FsFile m_file;
 };

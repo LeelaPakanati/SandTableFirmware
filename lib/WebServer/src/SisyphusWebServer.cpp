@@ -1,3 +1,4 @@
+#include "WiFi.h"
 #include "SisyphusWebServer.hpp"
 #include "WebUI.h"
 
@@ -140,6 +141,7 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
 
 void SisyphusWebServer::loop() {
     processPatternQueue();
+    recordPosition();
 }
 
 void SisyphusWebServer::processPatternQueue() {
@@ -245,21 +247,23 @@ String SisyphusWebServer::buildFileListJSON() {
     JsonDocument doc;
     JsonArray files = doc["files"].to<JsonArray>();
 
-    File root = LittleFS.open("/");
-    if (root && root.isDirectory()) {
-        File file = root.openNextFile();
-        while (file) {
-            if (!file.isDirectory() && String(file.name()).endsWith(".thr")) {
-                JsonObject fileObj = files.add<JsonObject>();
-                String name = String(file.name());
-                if (name.startsWith("/")) {
-                    name = name.substring(1);
+    FsFile root;
+    if (root.open("/")) {
+        FsFile file;
+        while (file.openNext(&root, O_RDONLY)) {
+            if (!file.isDirectory()) {
+                char nameBuffer[64];
+                file.getName(nameBuffer, sizeof(nameBuffer));
+                String name = String(nameBuffer);
+                if (name.endsWith(".thr")) {
+                    JsonObject fileObj = files.add<JsonObject>();
+                    fileObj["name"] = name;
+                    fileObj["size"] = file.fileSize();
                 }
-                fileObj["name"] = name;
-                fileObj["size"] = file.size();
             }
-            file = root.openNextFile();
+            file.close();
         }
+        root.close();
     }
 
     String output;
@@ -321,7 +325,7 @@ void SisyphusWebServer::handlePatternStart(AsyncWebServerRequest *request) {
     String clearingStr = request->getParam("clearing", true)->value();
 
     String filePath = "/" + file;
-    if (!LittleFS.exists(filePath)) {
+    if (!SD.exists(filePath)) {
         request->send(404, "application/json",
             "{\"success\":false,\"message\":\"File not found\"}");
         return;
@@ -442,8 +446,7 @@ void SisyphusWebServer::handleFileUpload(AsyncWebServerRequest *request, String 
         Serial.println(filename);
 
         String path = "/" + filename;
-        m_uploadFile = LittleFS.open(path, "w");
-        if (!m_uploadFile) {
+        if (!m_uploadFile.open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC)) {
             Serial.println("Failed to open file for writing");
             request->send(500, "application/json",
                 "{\"success\":false,\"message\":\"Failed to create file\"}");
@@ -451,12 +454,12 @@ void SisyphusWebServer::handleFileUpload(AsyncWebServerRequest *request, String 
         }
     }
 
-    if (m_uploadFile && len) {
+    if (m_uploadFile.isOpen() && len) {
         m_uploadFile.write(data, len);
     }
 
     if (final) {
-        if (m_uploadFile) {
+        if (m_uploadFile.isOpen()) {
             m_uploadFile.close();
             Serial.print("Upload complete: ");
             Serial.print(filename);
@@ -496,13 +499,13 @@ void SisyphusWebServer::handleFileDelete(AsyncWebServerRequest *request) {
         return;
     }
 
-    if (!LittleFS.exists(path)) {
+    if (!SD.exists(path)) {
         request->send(404, "application/json",
             "{\"success\":false,\"message\":\"File not found\"}");
         return;
     }
 
-    if (LittleFS.remove(path)) {
+    if (SD.remove(path)) {
         Serial.print("Deleted: ");
         Serial.println(filename);
         request->send(200, "application/json", "{\"success\":true}");
@@ -612,34 +615,32 @@ void SisyphusWebServer::handlePlaylistAdd(AsyncWebServerRequest *request) {
 }
 
 void SisyphusWebServer::handlePlaylistAddAll(AsyncWebServerRequest *request) {
-    // Get all .thr files from LittleFS
-    File root = LittleFS.open("/");
-    if (!root || !root.isDirectory()) {
+    // Get all .thr files from SD
+    FsFile root;
+    if (!root.open("/")) {
         request->send(500, "application/json",
             "{\"success\":false,\"message\":\"Failed to open root directory\"}");
         return;
     }
 
     int count = 0;
-    File file = root.openNextFile();
-    while (file) {
+    FsFile file;
+    while (file.openNext(&root, O_RDONLY)) {
         if (!file.isDirectory()) {
-            String filename = String(file.name());
+            char nameBuffer[64];
+            file.getName(nameBuffer, sizeof(nameBuffer));
+            String filename = String(nameBuffer);
             // Only add .thr files
             if (filename.endsWith(".thr")) {
-                // Remove leading slash if present
-                if (filename.startsWith("/")) {
-                    filename = filename.substring(1);
-                }
-                // Add with random clearing (will be randomly selected during playback)
                 m_playlist.addPattern(filename, SPIRAL_OUTWARD, true);
                 count++;
                 Serial.print("Added to playlist: ");
                 Serial.println(filename);
             }
         }
-        file = root.openNextFile();
+        file.close();
     }
+    root.close();
 
     String response = "{\"success\":true,\"count\":" + String(count) + "}";
     request->send(200, "application/json", response);
@@ -815,30 +816,100 @@ void SisyphusWebServer::handlePlaylistList(AsyncWebServerRequest *request) {
     JsonArray playlists = doc["playlists"].to<JsonArray>();
 
     // List all .json files in /playlists directory
-    if (LittleFS.exists("/playlists")) {
-        File root = LittleFS.open("/playlists");
-        if (root && root.isDirectory()) {
-            File file = root.openNextFile();
-            while (file) {
-                if (!file.isDirectory()) {
-                    String filename = String(file.name());
-                    if (filename.endsWith(".json")) {
-                        // Remove .json extension
-                        filename = filename.substring(0, filename.length() - 5);
-                        // Remove path prefix if present
-                        int lastSlash = filename.lastIndexOf('/');
-                        if (lastSlash != -1) {
-                            filename = filename.substring(lastSlash + 1);
-                        }
-                        playlists.add(filename);
-                    }
+    FsFile root;
+    if (root.open("/playlists")) {
+        FsFile file;
+        while (file.openNext(&root, O_RDONLY)) {
+            if (!file.isDirectory()) {
+                char nameBuffer[64];
+                file.getName(nameBuffer, sizeof(nameBuffer));
+                String filename = String(nameBuffer);
+                if (filename.endsWith(".json")) {
+                    // Remove .json extension
+                    filename = filename.substring(0, filename.length() - 5);
+                    playlists.add(filename);
                 }
-                file = root.openNextFile();
             }
+            file.close();
         }
+        root.close();
     }
 
     String output;
     serializeJson(doc, output);
     request->send(200, "application/json", output);
+}
+
+// ============================================================================
+// Position and Path Tracking
+// ============================================================================
+
+void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
+    JsonDocument doc;
+
+    // Get current position
+    PolarCord_t currentPos = m_polarControl->getCurrentPosition();
+    double maxRho = m_polarControl->getMaxRho();
+
+    // Convert to normalized Cartesian coordinates (0-1 range)
+    double x = currentPos.rho * cos(currentPos.theta) / maxRho;
+    double y = currentPos.rho * sin(currentPos.theta) / maxRho;
+
+    // Normalize to 0-1 range (center at 0.5,0.5)
+    doc["current"]["x"] = (x + 1.0) / 2.0;
+    doc["current"]["y"] = (y + 1.0) / 2.0;
+    doc["current"]["rho"] = currentPos.rho;
+    doc["current"]["theta"] = currentPos.theta;
+
+    // Add path history
+    JsonArray path = doc["path"].to<JsonArray>();
+    for (size_t i = 0; i < m_pathX.size(); ++i) {
+        JsonObject point = path.add<JsonObject>();
+        point["x"] = m_pathX[i];
+        point["y"] = m_pathY[i];
+    }
+
+    String output;
+    serializeJson(doc, output);
+    request->send(200, "application/json", output);
+}
+
+void SisyphusWebServer::recordPosition() {
+    // Get current position
+    PolarCord_t currentPos = m_polarControl->getCurrentPosition();
+    double maxRho = m_polarControl->getMaxRho();
+
+    // Only record if position has changed significantly
+    if (!m_pathInitialized ||
+        abs(currentPos.rho - m_lastRecordedPos.rho) > 1.0 ||
+        abs(currentPos.theta - m_lastRecordedPos.theta) > 0.01) {
+
+        // Convert to normalized Cartesian coordinates
+        double x = currentPos.rho * cos(currentPos.theta) / maxRho;
+        double y = currentPos.rho * sin(currentPos.theta) / maxRho;
+
+        // Normalize to 0-1 range (center at 0.5,0.5)
+        float normX = (x + 1.0f) / 2.0f;
+        float normY = (y + 1.0f) / 2.0f;
+
+        // Add to path history
+        m_pathX.push_back(normX);
+        m_pathY.push_back(normY);
+
+        // Limit path history size
+        if (m_pathX.size() > MAX_PATH_POINTS) {
+            m_pathX.erase(m_pathX.begin());
+            m_pathY.erase(m_pathY.begin());
+        }
+
+        m_lastRecordedPos = currentPos;
+        m_pathInitialized = true;
+    }
+}
+
+void SisyphusWebServer::clearPathHistory() {
+    m_pathX.clear();
+    m_pathY.clear();
+    m_pathInitialized = false;
+    m_lastRecordedPos = {0.0, 0.0};
 }
