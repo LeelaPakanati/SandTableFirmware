@@ -319,6 +319,48 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             border-radius: 8px;
             background: #f7fafc;
         }
+
+        .console-container {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            max-height: 300px;
+            overflow-y: auto;
+            color: #00ff00;
+        }
+
+        .console-line {
+            margin: 0;
+            padding: 1px 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .console-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .console-status {
+            font-size: 0.875em;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .console-connected {
+            background: #48bb78;
+            color: white;
+        }
+
+        .console-disconnected {
+            background: #f56565;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -479,6 +521,19 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 </div>
             </div>
         </div>
+
+        <div class="card">
+            <div class="console-header">
+                <h2 style="margin-bottom: 0; border-bottom: none; padding-bottom: 0;">Console</h2>
+                <div>
+                    <span id="console-status" class="console-status console-disconnected">Disconnected</span>
+                    <button class="btn-small btn-secondary" id="btn-clear-console" style="margin-left: 8px;">Clear</button>
+                </div>
+            </div>
+            <div class="console-container" id="console-output">
+                <div class="console-line">Connecting to console...</div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -495,11 +550,64 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             async init() {
                 this.setupCanvas();
                 this.setupEventListeners();
+                this.setupConsole();
                 await this.loadFileList();
                 await this.loadSystemInfo();
                 await this.loadPlaylistStatus();
                 this.startStatusPolling();
                 this.startPositionPolling();
+            }
+
+            setupConsole() {
+                this.consoleOutput = document.getElementById('console-output');
+                this.consoleStatus = document.getElementById('console-status');
+                this.maxConsoleLines = 200;
+
+                document.getElementById('btn-clear-console').addEventListener('click', () => {
+                    this.consoleOutput.innerHTML = '';
+                });
+
+                this.connectConsole();
+            }
+
+            connectConsole() {
+                this.eventSource = new EventSource('/api/console');
+
+                this.eventSource.onopen = () => {
+                    this.consoleStatus.textContent = 'Connected';
+                    this.consoleStatus.className = 'console-status console-connected';
+                };
+
+                this.eventSource.onerror = () => {
+                    this.consoleStatus.textContent = 'Disconnected';
+                    this.consoleStatus.className = 'console-status console-disconnected';
+                    // Try to reconnect after 2 seconds
+                    setTimeout(() => this.connectConsole(), 2000);
+                };
+
+                this.eventSource.addEventListener('log', (e) => {
+                    this.appendToConsole(e.data);
+                });
+            }
+
+            appendToConsole(text) {
+                // Split by newlines and add each line
+                const lines = text.split('\n');
+                for (const line of lines) {
+                    if (line.trim() === '') continue;
+                    const div = document.createElement('div');
+                    div.className = 'console-line';
+                    div.textContent = line;
+                    this.consoleOutput.appendChild(div);
+                }
+
+                // Limit number of lines
+                while (this.consoleOutput.children.length > this.maxConsoleLines) {
+                    this.consoleOutput.removeChild(this.consoleOutput.firstChild);
+                }
+
+                // Auto-scroll to bottom
+                this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
             }
 
             setupCanvas() {
@@ -650,7 +758,9 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     // Update coordinate display
                     const coordsElement = document.getElementById('position-coords');
                     const rho = data.current.rho.toFixed(1);
-                    const theta = (data.current.theta * 180 / Math.PI).toFixed(1);
+                    let displayTheta = (data.current.theta * 180 / Math.PI) % 360;
+                    if (displayTheta < 0) displayTheta += 360;
+                    const theta = displayTheta.toFixed(1);
                     const cartX = ((data.current.x - 0.5) * 2 * 450).toFixed(1); // Convert back to mm from center
                     const cartY = ((data.current.y - 0.5) * 2 * 450).toFixed(1);
                     coordsElement.textContent = `ρ: ${rho}mm, θ: ${theta}°, X: ${cartX}mm, Y: ${cartY}mm`;
@@ -667,7 +777,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     } catch (error) {
                         // Silently handle errors to avoid console spam
                     }
-                }, 200); // Update 5 times per second
+                }, 500); // Update 2 times per second
             }
 
             async startPattern() {

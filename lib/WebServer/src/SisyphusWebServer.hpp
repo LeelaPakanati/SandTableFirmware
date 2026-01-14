@@ -1,12 +1,13 @@
 #pragma once
 #include <ESPAsyncWebServer.h>
+#include <vector>
 #include <ArduinoJson.h>
+#include <freertos/semphr.h>
+#include <SDCard.hpp>
 #include <PolarControl.hpp>
 #include <LEDController.hpp>
-#include <ClearingPatternGen.hpp>
 #include <PlaylistManager.hpp>
-#include <SDCard.hpp>
-#include <vector>
+#include "Logger.hpp"
 
 class SisyphusWebServer {
 public:
@@ -16,23 +17,23 @@ public:
 
 private:
     AsyncWebServer m_server;
+    AsyncEventSource m_events;  // SSE for console logs
     PolarControl *m_polarControl;
     LEDController *m_ledController;
 
     // Pattern queue management
     String m_queuedPattern;
-    ClearingPattern m_queuedClearing;
-    bool m_isClearing;
     bool m_hasQueuedPattern;
     unsigned long m_lastUploadTime;
-    uint8_t m_speedBeforeClearing; // Save speed to restore after clearing
 
     // Playlist management
     PlaylistManager m_playlist;
     bool m_playlistMode;
+    bool m_runningClearing;       // True if currently running a clearing pattern
+    String m_pendingPattern;      // Pattern to run after clearing completes
 
     // File upload handling
-    FsFile m_uploadFile;
+    File m_uploadFile;
 
     // Path history for viewer (stores points as x,y in normalized 0-1 range)
     static constexpr int MAX_PATH_POINTS = 500;
@@ -40,6 +41,9 @@ private:
     std::vector<float> m_pathY;
     PolarCord_t m_lastRecordedPos;
     bool m_pathInitialized;
+
+    // Thread safety
+    SemaphoreHandle_t m_pathMutex = NULL;
 
     // Route handlers
     void handlePosition(AsyncWebServerRequest *request);
@@ -77,9 +81,11 @@ private:
     void processPatternQueue();
     void recordPosition();
     void clearPathHistory();
+    void broadcastLogs();
     String buildStatusJSON();
     String buildFileListJSON();
     String buildSystemInfoJSON();
     String getStateString();
-    ClearingPattern stringToClearingPattern(const String &str);
+
+    unsigned long m_lastLogBroadcast = 0;
 };

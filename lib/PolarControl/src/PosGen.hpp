@@ -36,7 +36,7 @@ struct PolarCord_t {
   }
 
   PolarCord_t operator / (int div) {
-    return {theta / div, rho / div};
+    return {theta / (double)div, rho / (double)div};
   }
 };
 
@@ -49,7 +49,7 @@ class PosGen {
 class FilePosGen : public PosGen {
   public:
     ~FilePosGen() {
-      if (m_file.isOpen()) {
+      if (m_file) {
         m_file.close();
       }
     }
@@ -58,21 +58,22 @@ class FilePosGen : public PosGen {
       m_currFile(filePath),
       m_maxRho(maxRho)
     {
-      if (!m_file.open(filePath.c_str(), O_RDONLY)) {
+      m_file = SD.open(filePath.c_str(), FILE_READ);
+      if (!m_file) {
         Serial.print("ERROR: Could not open file: ");
         Serial.println(filePath);
       } else {
         Serial.print("Opened file: ");
         Serial.print(filePath);
         Serial.print(" (Size: ");
-        Serial.print(m_file.fileSize());
+        Serial.print(m_file.size());
         Serial.println(" bytes)");
       }
     }
 
     PolarCord_t getNextPos() override {
-      if (!m_file.isOpen() || !m_file.available()) {
-        if (m_file.isOpen()) {
+      if (!m_file || !m_file.available()) {
+        if (m_file) {
           m_file.close();
           Serial.println("End of file reached");
         }
@@ -80,13 +81,7 @@ class FilePosGen : public PosGen {
       }
 
       // Read a line from the file
-      char lineBuffer[256];
-      int len = m_file.fgets(lineBuffer, sizeof(lineBuffer));
-      if (len <= 0) {
-        return {std::nan(""), std::nan("")};
-      }
-
-      String line = String(lineBuffer);
+      String line = m_file.readStringUntil('\n');
       line.trim();
       m_currLine++;
 
@@ -133,5 +128,5 @@ class FilePosGen : public PosGen {
     int m_currLine = 0;
     String m_currFile = "";
     double m_maxRho;
-    FsFile m_file;
+    File m_file;
 };

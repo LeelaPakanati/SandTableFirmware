@@ -1,14 +1,55 @@
 #include "WiFi.h"
 #include "SisyphusWebServer.hpp"
 #include "WebUI.h"
+#include <ClearingPatternGen.hpp>
+
+// Global WebLogger instance
+WebLogger webLogger;
+
+// WebLogger implementation
+void WebLogger::ensureMutex() {
+    if (m_mutex == NULL) {
+        m_mutex = xSemaphoreCreateMutex();
+    }
+}
+
+size_t WebLogger::write(uint8_t c) {
+    ensureMutex();
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
+    if (m_buffer.length() < MAX_LOG_SIZE) {
+        m_buffer += (char)c;
+    }
+    xSemaphoreGive(m_mutex);
+    return 1;
+}
+
+size_t WebLogger::write(const uint8_t *buffer, size_t size) {
+    ensureMutex();
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
+    for (size_t i = 0; i < size && m_buffer.length() < MAX_LOG_SIZE; i++) {
+        m_buffer += (char)buffer[i];
+    }
+    xSemaphoreGive(m_mutex);
+    return size;
+}
+
+String WebLogger::getNewLogs() {
+    ensureMutex();
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
+    String result = m_buffer;
+    m_buffer = "";
+    xSemaphoreGive(m_mutex);
+    return result;
+}
 
 SisyphusWebServer::SisyphusWebServer(uint16_t port)
     : m_server(port),
+      m_events("/api/console"),
       m_polarControl(nullptr),
       m_ledController(nullptr),
-      m_isClearing(false),
       m_hasQueuedPattern(false),
       m_playlistMode(false),
+      m_runningClearing(false),
       m_lastUploadTime(0),
       m_lastRecordedPos({0, 0}),
       m_pathInitialized(false) {
@@ -17,6 +58,9 @@ SisyphusWebServer::SisyphusWebServer(uint16_t port)
 }
 
 void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledController) {
+    if (m_pathMutex == NULL) {
+        m_pathMutex = xSemaphoreCreateMutex();
+    }
     m_polarControl = polarControl;
     m_ledController = ledController;
 
@@ -135,6 +179,12 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
         handlePlaylistList(request);
     });
 
+    // SSE for console logs
+    m_events.onConnect([](AsyncEventSourceClient *client) {
+        client->send("Connected to console", NULL, millis(), 1000);
+    });
+    m_server.addHandler(&m_events);
+
     m_server.begin();
     Serial.println("Web server started on port 80");
 }
@@ -142,6 +192,21 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
 void SisyphusWebServer::loop() {
     processPatternQueue();
     recordPosition();
+    broadcastLogs();
+}
+
+void SisyphusWebServer::broadcastLogs() {
+    // Broadcast logs every 100ms if there are connected clients
+    unsigned long now = millis();
+    if (now - m_lastLogBroadcast < 100) return;
+    m_lastLogBroadcast = now;
+
+    if (m_events.count() == 0) return;
+
+    String logs = webLogger.getNewLogs();
+    if (logs.length() > 0) {
+        m_events.send(logs.c_str(), "log", millis());
+    }
 }
 
 void SisyphusWebServer::processPatternQueue() {
@@ -149,72 +214,64 @@ void SisyphusWebServer::processPatternQueue() {
     uint8_t stateValue = static_cast<uint8_t>(state);
 
     // Handle single pattern queue
-    if (m_hasQueuedPattern) {
-        if (m_isClearing && stateValue == 2) {
-            Serial.println("Clearing complete, starting user pattern");
-            m_isClearing = false;
-
-            // Restore speed after clearing
-            m_polarControl->setSpeed(m_speedBeforeClearing);
-            Serial.print("Speed restored to: ");
-            Serial.println(m_speedBeforeClearing);
-
-            m_polarControl->loadAndRunFile("/" + m_queuedPattern);
-            m_hasQueuedPattern = false;
-            m_queuedPattern = "";
-        }
+    if (m_hasQueuedPattern && stateValue == 2) { // IDLE
+        clearPathHistory();
+        m_polarControl->loadAndRunFile("/" + m_queuedPattern);
+        m_hasQueuedPattern = false;
+        m_queuedPattern = "";
         return;
     }
 
     // Handle playlist mode
     if (m_playlistMode && stateValue == 2) { // IDLE state
+        // If we just finished a clearing pattern, start the pending pattern
+        if (m_runningClearing && m_pendingPattern.length() > 0) {
+            LOG("Playlist: Starting pattern after clearing: %s\r\n", m_pendingPattern.c_str());
+            clearPathHistory();
+            m_polarControl->loadAndRunFile("/" + m_pendingPattern);
+            m_pendingPattern = "";
+            m_runningClearing = false;
+            return;
+        }
+
         if (m_playlist.hasNext()) {
-            ClearingPattern clearing;
-            bool useClearing;
-            String nextPattern = m_playlist.getNextPattern(clearing, useClearing);
+            NextPatternResult next = m_playlist.getNextPattern();
 
-            if (nextPattern.length() > 0) {
-                Serial.print("Playlist: Starting next pattern: ");
-                Serial.println(nextPattern);
+            if (next.filename.length() > 0) {
+                // Check if we need to run clearing first
+                if (next.needsClearing && next.clearingPattern != CLEARING_NONE) {
+                    LOG("Playlist: Running clearing pattern %d before: %s\r\n",
+                        (int)next.clearingPattern, next.filename.c_str());
 
-                if (useClearing) {
-                    // Save current speed and set to max for clearing
-                    m_speedBeforeClearing = m_polarControl->getSpeed();
-                    m_polarControl->setSpeed(10); // Max speed for clearing
-                    Serial.println("Clearing: Speed set to MAX (10)");
+                    // Store the pattern to run after clearing
+                    m_pendingPattern = next.filename;
+                    m_runningClearing = true;
 
-                    // Start clearing pattern first
-                    ClearingPatternGen *clearingGen = new ClearingPatternGen(clearing, 450.0);
-                    if (m_polarControl->start(clearingGen)) {
-                        m_isClearing = true;
-                        m_hasQueuedPattern = true;
-                        m_queuedPattern = nextPattern;
-                        m_queuedClearing = clearing;
-                    } else {
-                        delete clearingGen;
-                        // Restore speed if clearing failed
-                        m_polarControl->setSpeed(m_speedBeforeClearing);
-                        // Start pattern directly if clearing failed
-                        m_polarControl->loadAndRunFile("/" + nextPattern);
+                    // Start the clearing pattern
+                    ClearingPattern pattern = next.clearingPattern;
+                    if (pattern == CLEARING_RANDOM) {
+                        pattern = getRandomClearingPattern();
                     }
+                    ClearingPatternGen* clearingGen = new ClearingPatternGen(pattern, m_polarControl->getMaxRho());
+                    m_polarControl->start(clearingGen);
                 } else {
-                    // Start pattern directly without clearing
-                    m_polarControl->loadAndRunFile("/" + nextPattern);
+                    // No clearing needed, start pattern directly
+                    LOG("Playlist: Starting pattern: %s\r\n", next.filename.c_str());
+                    clearPathHistory();
+                    m_polarControl->loadAndRunFile("/" + next.filename);
                 }
             }
         } else {
             // Playlist ended (only possible in SEQUENTIAL mode)
-            Serial.println("Playlist complete");
+            LOG("Playlist complete\r\n");
             m_playlistMode = false;
+            m_runningClearing = false;
+            m_pendingPattern = "";
         }
     }
 }
 
 String SisyphusWebServer::getStateString() {
-    if (m_isClearing) {
-        return "CLEARING";
-    }
-
     auto state = m_polarControl->getState();
     uint8_t stateValue = static_cast<uint8_t>(state);
 
@@ -247,21 +304,23 @@ String SisyphusWebServer::buildFileListJSON() {
     JsonDocument doc;
     JsonArray files = doc["files"].to<JsonArray>();
 
-    FsFile root;
-    if (root.open("/")) {
-        FsFile file;
-        while (file.openNext(&root, O_RDONLY)) {
+    File root = SD.open("/");
+    if (root) {
+        File file = root.openNextFile();
+        while (file) {
             if (!file.isDirectory()) {
-                char nameBuffer[64];
-                file.getName(nameBuffer, sizeof(nameBuffer));
-                String name = String(nameBuffer);
+                String name = String(file.name());
+                // Remove leading slash if present
+                if (name.startsWith("/")) name = name.substring(1);
+                
                 if (name.endsWith(".thr")) {
                     JsonObject fileObj = files.add<JsonObject>();
                     fileObj["name"] = name;
-                    fileObj["size"] = file.fileSize();
+                    fileObj["size"] = file.size();
                 }
             }
             file.close();
+            file = root.openNextFile();
         }
         root.close();
     }
@@ -287,15 +346,6 @@ String SisyphusWebServer::buildSystemInfoJSON() {
     return output;
 }
 
-ClearingPattern SisyphusWebServer::stringToClearingPattern(const String &str) {
-    if (str == "spiral_outward") return SPIRAL_OUTWARD;
-    if (str == "spiral_inward") return SPIRAL_INWARD;
-    if (str == "concentric_circles") return CONCENTRIC_CIRCLES;
-    if (str == "zigzag_radial") return ZIGZAG_RADIAL;
-    if (str == "petal_flower") return PETAL_FLOWER;
-    return SPIRAL_OUTWARD;
-}
-
 void SisyphusWebServer::handleRoot(AsyncWebServerRequest *request) {
     request->send(200, "text/html", WEB_UI_HTML);
 }
@@ -315,14 +365,13 @@ void SisyphusWebServer::handlePatternStart(AsyncWebServerRequest *request) {
         return;
     }
 
-    if (!request->hasParam("file", true) || !request->hasParam("clearing", true)) {
+    if (!request->hasParam("file", true)) {
         request->send(400, "application/json",
             "{\"success\":false,\"message\":\"Missing parameters\"}");
         return;
     }
 
     String file = request->getParam("file", true)->value();
-    String clearingStr = request->getParam("clearing", true)->value();
 
     String filePath = "/" + file;
     if (!SD.exists(filePath)) {
@@ -331,39 +380,18 @@ void SisyphusWebServer::handlePatternStart(AsyncWebServerRequest *request) {
         return;
     }
 
-    ClearingPattern clearing = stringToClearingPattern(clearingStr);
-
-    // Save current speed and set to max for clearing
-    m_speedBeforeClearing = m_polarControl->getSpeed();
-    m_polarControl->setSpeed(10); // Max speed for clearing
-    Serial.println("Clearing: Speed set to MAX (10)");
-
-    ClearingPatternGen *clearingGen = new ClearingPatternGen(clearing, 450.0);
-
-    if (!m_polarControl->start(clearingGen)) {
-        delete clearingGen;
-        // Restore speed if clearing failed
-        m_polarControl->setSpeed(m_speedBeforeClearing);
-        request->send(500, "application/json",
-            "{\"success\":false,\"message\":\"Failed to start clearing\"}");
-        return;
-    }
-
     m_queuedPattern = file;
-    m_queuedClearing = clearing;
-    m_isClearing = true;
     m_hasQueuedPattern = true;
 
-    Serial.print("Starting clearing pattern: ");
-    Serial.println(clearingStr);
+    Serial.print("Queued pattern: ");
+    Serial.println(file);
 
     request->send(200, "application/json",
-        "{\"success\":true,\"message\":\"Clearing started\"}");
+        "{\"success\":true,\"message\":\"Pattern started\"}");
 }
 
 void SisyphusWebServer::handlePatternStop(AsyncWebServerRequest *request) {
     bool success = m_polarControl->stop();
-    m_isClearing = false;
     m_hasQueuedPattern = false;
     m_queuedPattern = "";
 
@@ -446,7 +474,12 @@ void SisyphusWebServer::handleFileUpload(AsyncWebServerRequest *request, String 
         Serial.println(filename);
 
         String path = "/" + filename;
-        if (!m_uploadFile.open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC)) {
+        if (SD.exists(path)) {
+            SD.remove(path);
+        }
+        
+        m_uploadFile = SD.open(path.c_str(), FILE_WRITE);
+        if (!m_uploadFile) {
             Serial.println("Failed to open file for writing");
             request->send(500, "application/json",
                 "{\"success\":false,\"message\":\"Failed to create file\"}");
@@ -454,12 +487,12 @@ void SisyphusWebServer::handleFileUpload(AsyncWebServerRequest *request, String 
         }
     }
 
-    if (m_uploadFile.isOpen() && len) {
+    if (m_uploadFile && len) {
         m_uploadFile.write(data, len);
     }
 
     if (final) {
-        if (m_uploadFile.isOpen()) {
+        if (m_uploadFile) {
             m_uploadFile.close();
             Serial.print("Upload complete: ");
             Serial.print(filename);
@@ -594,51 +627,45 @@ void SisyphusWebServer::handleSystemInfo(AsyncWebServerRequest *request) {
 // ============================================================================
 
 void SisyphusWebServer::handlePlaylistAdd(AsyncWebServerRequest *request) {
-    if (!request->hasParam("file", true) || !request->hasParam("clearing", true)) {
+    if (!request->hasParam("file", true)) {
         request->send(400, "application/json",
             "{\"success\":false,\"message\":\"Missing parameters\"}");
         return;
     }
 
     String file = request->getParam("file", true)->value();
-    String clearingStr = request->getParam("clearing", true)->value();
-    bool useClearing = true;
-
-    if (request->hasParam("useClearing", true)) {
-        useClearing = request->getParam("useClearing", true)->value() == "true";
-    }
-
-    ClearingPattern clearing = stringToClearingPattern(clearingStr);
-    m_playlist.addPattern(file, clearing, useClearing);
+    m_playlist.addPattern(file);
 
     request->send(200, "application/json", "{\"success\":true}");
 }
 
 void SisyphusWebServer::handlePlaylistAddAll(AsyncWebServerRequest *request) {
     // Get all .thr files from SD
-    FsFile root;
-    if (!root.open("/")) {
+    File root = SD.open("/");
+    if (!root) {
         request->send(500, "application/json",
             "{\"success\":false,\"message\":\"Failed to open root directory\"}");
         return;
     }
 
     int count = 0;
-    FsFile file;
-    while (file.openNext(&root, O_RDONLY)) {
+    File file = root.openNextFile();
+    while (file) {
         if (!file.isDirectory()) {
-            char nameBuffer[64];
-            file.getName(nameBuffer, sizeof(nameBuffer));
-            String filename = String(nameBuffer);
+            String filename = String(file.name());
+            // Remove leading slash if present
+            if (filename.startsWith("/")) filename = filename.substring(1);
+
             // Only add .thr files
             if (filename.endsWith(".thr")) {
-                m_playlist.addPattern(filename, SPIRAL_OUTWARD, true);
+                m_playlist.addPattern(filename);
                 count++;
                 Serial.print("Added to playlist: ");
                 Serial.println(filename);
             }
         }
         file.close();
+        file = root.openNextFile();
     }
     root.close();
 
@@ -693,26 +720,6 @@ void SisyphusWebServer::handlePlaylistGet(AsyncWebServerRequest *request) {
         const PlaylistItem& item = m_playlist.getItem(i);
         JsonObject obj = items.add<JsonObject>();
         obj["filename"] = item.filename;
-
-        switch (item.clearing) {
-            case SPIRAL_OUTWARD:
-                obj["clearing"] = "spiral_outward";
-                break;
-            case SPIRAL_INWARD:
-                obj["clearing"] = "spiral_inward";
-                break;
-            case CONCENTRIC_CIRCLES:
-                obj["clearing"] = "concentric_circles";
-                break;
-            case ZIGZAG_RADIAL:
-                obj["clearing"] = "zigzag_radial";
-                break;
-            case PETAL_FLOWER:
-                obj["clearing"] = "petal_flower";
-                break;
-        }
-
-        obj["useClearing"] = item.useClearing;
     }
 
     String output;
@@ -816,14 +823,15 @@ void SisyphusWebServer::handlePlaylistList(AsyncWebServerRequest *request) {
     JsonArray playlists = doc["playlists"].to<JsonArray>();
 
     // List all .json files in /playlists directory
-    FsFile root;
-    if (root.open("/playlists")) {
-        FsFile file;
-        while (file.openNext(&root, O_RDONLY)) {
+    File root = SD.open("/playlists");
+    if (root) {
+        File file = root.openNextFile();
+        while (file) {
             if (!file.isDirectory()) {
-                char nameBuffer[64];
-                file.getName(nameBuffer, sizeof(nameBuffer));
-                String filename = String(nameBuffer);
+                String filename = String(file.name());
+                // Remove leading slash if present
+                if (filename.startsWith("/")) filename = filename.substring(1);
+
                 if (filename.endsWith(".json")) {
                     // Remove .json extension
                     filename = filename.substring(0, filename.length() - 5);
@@ -831,6 +839,7 @@ void SisyphusWebServer::handlePlaylistList(AsyncWebServerRequest *request) {
                 }
             }
             file.close();
+            file = root.openNextFile();
         }
         root.close();
     }
@@ -862,12 +871,14 @@ void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
     doc["current"]["theta"] = currentPos.theta;
 
     // Add path history
+    xSemaphoreTake(m_pathMutex, portMAX_DELAY);
     JsonArray path = doc["path"].to<JsonArray>();
     for (size_t i = 0; i < m_pathX.size(); ++i) {
         JsonObject point = path.add<JsonObject>();
         point["x"] = m_pathX[i];
         point["y"] = m_pathY[i];
     }
+    xSemaphoreGive(m_pathMutex);
 
     String output;
     serializeJson(doc, output);
@@ -881,8 +892,8 @@ void SisyphusWebServer::recordPosition() {
 
     // Only record if position has changed significantly
     if (!m_pathInitialized ||
-        abs(currentPos.rho - m_lastRecordedPos.rho) > 1.0 ||
-        abs(currentPos.theta - m_lastRecordedPos.theta) > 0.01) {
+        abs(currentPos.rho - m_lastRecordedPos.rho) > 2.0 ||
+        abs(currentPos.theta - m_lastRecordedPos.theta) > 0.02) {
 
         // Convert to normalized Cartesian coordinates
         double x = currentPos.rho * cos(currentPos.theta) / maxRho;
@@ -893,6 +904,7 @@ void SisyphusWebServer::recordPosition() {
         float normY = (y + 1.0f) / 2.0f;
 
         // Add to path history
+        xSemaphoreTake(m_pathMutex, portMAX_DELAY);
         m_pathX.push_back(normX);
         m_pathY.push_back(normY);
 
@@ -901,6 +913,7 @@ void SisyphusWebServer::recordPosition() {
             m_pathX.erase(m_pathX.begin());
             m_pathY.erase(m_pathY.begin());
         }
+        xSemaphoreGive(m_pathMutex);
 
         m_lastRecordedPos = currentPos;
         m_pathInitialized = true;
@@ -908,8 +921,10 @@ void SisyphusWebServer::recordPosition() {
 }
 
 void SisyphusWebServer::clearPathHistory() {
+    xSemaphoreTake(m_pathMutex, portMAX_DELAY);
     m_pathX.clear();
     m_pathY.clear();
+    xSemaphoreGive(m_pathMutex);
     m_pathInitialized = false;
     m_lastRecordedPos = {0.0, 0.0};
 }

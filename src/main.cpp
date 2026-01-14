@@ -35,9 +35,6 @@ void motorTask(void *parameter) {
     while (true) {
         // Process motor moves
         bool isRunning = polarControl.processNextMove();
-        if (loopCount % 1000 == 0) {
-            Serial.printf("DEBUG: processNextMove() returned: %d\n", isRunning);
-        }
 
         loopCount++;
 
@@ -91,6 +88,7 @@ void setup() {
 
     // Initialize hardware
     Serial.println("Initializing motors...");
+    polarControl.begin();
     polarControl.setupDrivers();
     polarControl.home();
 
@@ -98,7 +96,7 @@ void setup() {
     Serial.println("Initializing LED controller...");
     ledController.begin();
 
-    // Start web server BEFORE clearing so user can monitor
+    // Start web server
     Serial.println("Starting web server...");
     webServer.begin(&polarControl, &ledController);
 
@@ -117,20 +115,8 @@ void setup() {
         MOTOR_CORE
     );
 
-    // Run startup clearing pattern
-    Serial.println("Running startup clearing pattern...");
-    ClearingPatternGen *startupClearing = new ClearingPatternGen(SPIRAL_OUTWARD, 450.0);
-    if (polarControl.start(startupClearing)) {
-        Serial.println("Startup clearing pattern started");
-        while (polarControl.getState() != 2) {
-            webServer.loop();
-            delay(10);
-        }
-        Serial.println("\nStartup clearing pattern complete");
-    } else {
-        delete startupClearing;
-        Serial.println("Failed to start clearing pattern");
-    }
+    // Initial speed
+    polarControl.setSpeed(5);
 
     Serial.printf("Main loop running on Core %d\n", xPortGetCoreID());
 }

@@ -2,7 +2,7 @@
 #include <TMCStepper.h>
 #include <FastAccelStepper.h>
 #include <PosGen.hpp>
-#include <MotionPlanner.hpp>
+#include <freertos/semphr.h>
 
 // Pin definitions
 #define R_STEP_PIN 33
@@ -29,6 +29,7 @@ public:
   ~PolarControl();
 
   // Lifecycle
+  void begin();
   void setupDrivers();
   void home();
 
@@ -51,28 +52,28 @@ public:
   double getMaxRho() const { return R_MAX; }
 
 private:
-  // Hardware constants
-  static constexpr double R_MAX = 450.0;
-  static constexpr double T_MAX_VELOCITY = (2 * PI) / 10;      // rad/s
-  static constexpr double R_MAX_VELOCITY = R_MAX / 40;          // mm/s
-  static constexpr double T_MAX_ACCEL = T_MAX_VELOCITY / 0.1;   // rad/s²
-  static constexpr double R_MAX_ACCEL = R_MAX_VELOCITY / 0.1;   // mm/s²
-  static constexpr int STEPS_PER_RADIAN = (400 / (2 * PI)) * (60 / 16);
+  // Physical constants
+  static constexpr double R_MAX = 450.0;                        // mm, table radius
   static constexpr int STEPS_PER_MM = 100;
+  static constexpr int STEPS_PER_RADIAN = (int)((400.0 / (2.0 * PI)) * (60.0 / 16.0));
 
+  // Motor limits (these clamp the maximum motor speeds)
+  // R: 450mm in 20s = 22.5 mm/s max
+  // T: 2*PI rad in 20s = 0.314 rad/s max
+  static constexpr double R_MAX_VELOCITY = 22.5;                // mm/s (20s edge-to-edge)
+  static constexpr double T_MAX_VELOCITY = 0.314;               // rad/s (20s per rotation)
+  static constexpr double R_MAX_ACCEL = 50.0;                   // mm/s² (gentler accel)
+  static constexpr double T_MAX_ACCEL = 1.0;                    // rad/s² (gentler accel)
+
+  // Driver settings
   static constexpr int T_MICROSTEPS = 2;
   static constexpr int T_CURRENT = 800;
-  static constexpr double T_MAX_STEP_VELOCITY = STEPS_PER_RADIAN * T_MAX_VELOCITY;
-  static constexpr double T_MAX_STEP_ACCEL = STEPS_PER_RADIAN * T_MAX_ACCEL;
-
   static constexpr int R_MICROSTEPS = 2;
   static constexpr int R_CURRENT = 500;
-  static constexpr double R_MAX_STEP_VELOCITY = STEPS_PER_MM * R_MAX_VELOCITY;
-  static constexpr double R_MAX_STEP_ACCEL = STEPS_PER_RADIAN * R_MAX_ACCEL;
 
   // Look-ahead buffer
+  static constexpr int BUFFER_SIZE = 10;
   struct PathBuffer {
-    static constexpr int BUFFER_SIZE = 10;
     PolarCord_t points[BUFFER_SIZE];
     int head = 0;
     int tail = 0;
@@ -86,71 +87,50 @@ private:
     void clear();
   };
 
-  // Curvature analysis
-  struct PathCurvature {
-    double radius;
-    double angle;
-    double maxSafeSpeed;
-  };
-
   // Hardware
   FastAccelStepperEngine m_stepperEngine;
-  FastAccelStepper *m_tStepper;
-  FastAccelStepper *m_rStepper;
+  FastAccelStepper *m_tStepper = nullptr;
+  FastAccelStepper *m_rStepper = nullptr;
   TMC2209Stepper m_tDriver;
   TMC2209Stepper m_rDriver;
   TMC2209Stepper m_rCDriver;
 
+  // Thread safety
+  SemaphoreHandle_t m_mutex = NULL;
+
   // State
-  State_t m_state;
+  State_t m_state = UNINITIALIZED;
   PosGen *m_posGen = nullptr;
   PathBuffer m_buffer;
-  PolarCord_t m_currPos = {0.0, 0.0};
-  double m_currentVelR = 0.0;
-  double m_currentVelT = 0.0;
-  int8_t m_lastTDir = 1;
-  int8_t m_lastRDir = 1;
-  uint8_t m_speed = 5;
 
-  // Motion planning parameters
-  bool m_useScurve = true;
-  double m_maxJerkT = 60.0;
-  double m_maxJerkR = 1000.0;
-  double m_maxCentripetalAccel = 50.0;
-  double m_minCurveRadius = 5.0;
-  double m_centerThreshold = 10.0;
+  // Current position and velocity
+  PolarCord_t m_currPos = {0.0, 0.0};
+  double m_currVelR = 0.0;    // Current R velocity (mm/s)
+  double m_currVelT = 0.0;    // Current T velocity (rad/s)
+
+  // Speed setting: speed 10 = 20mm/s Cartesian velocity
+  uint8_t m_speed = 5;
 
   // Buffer management
   void fillBuffer();
 
-  // Motion planning
-  bool planAndQueueNextMove();
-  bool handleDirectionChange(PolarCord_t target, bool rChange, bool tChange);
-  PolarCord_t calculateSmoothedTarget();
-  double calculateCartesianDistance(PolarCord_t from, PolarCord_t to);
+  // Motion planning - the core of the new system
+  bool planNextMove();
+  double calcLookAheadEndVel(int axis);  // 0=R, 1=T
 
-  // Move execution
-  bool queueCoordinatedMove(PolarCord_t target, double maxVelR, double maxVelT,
-                            double endVelR, double endVelT);
+  // Execute a move with trapezoidal velocity profile
+  bool executeMove(double rDist, double tDist,
+                   double startVelR, double startVelT,
+                   double endVelR, double endVelT,
+                   double maxVelR, double maxVelT);
+
+  // Helpers
+  static double normalizeThetaDiff(double diff);
+  double calcCartesianDist(PolarCord_t from, PolarCord_t to);
   void forceStop();
 
-  // Profile calculation
-  bool calculateMotionProfile(double distance, double startVel, double endVel,
-                              double maxVel, double maxAccel, MotionProfile &profile);
-  bool synchronizeProfiles(MotionProfile &p1, MotionProfile &p2, double targetTime = 0.0);
-  bool adjustProfileToTime(MotionProfile &profile, double targetTime);
-
-  // Speed adaptation
-  PathCurvature calculateCurvature(int bufferIndex);
-  double adaptSpeedForCurvature(double baseSpeed, const PathCurvature &curve, bool isRadial);
-  double calculateDynamicTimeResolution(double distance);
-
-  // Path smoothing
-  PolarCord_t interpolateSpline(double t, PolarCord_t p0, PolarCord_t p1,
-                                 PolarCord_t p2, PolarCord_t p3);
-
-  // Driver setup
+  // Driver setup and homing
   static void commonSetupDriver(TMC2209Stepper &driver);
-  static void home(TMC2209Stepper &driver, int speed);
-  static void home(TMC2209Stepper &driver);
+  void homeDriver(TMC2209Stepper &driver, int speed);
+  void homeDriver(TMC2209Stepper &driver);
 };

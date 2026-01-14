@@ -3,167 +3,124 @@
 #include <ArduinoJson.h>
 
 PlaylistManager::PlaylistManager()
-    : m_mode(SEQUENTIAL), m_currentIndex(0) {
+    : m_mode(SEQUENTIAL), m_currentIndex(0), m_clearingEnabled(true),
+      m_isFirstPattern(true), m_shuffleIndex(0) {
 }
 
-void PlaylistManager::addPattern(String filename, ClearingPattern clearing, bool useClearing) {
-    m_items.push_back(PlaylistItem(filename, clearing, useClearing));
+void PlaylistManager::addPattern(String filename) {
+  m_playlist.emplace_back(filename);
+  if (m_mode == SHUFFLE) {
+    reshuffle();
+  }
 }
 
 void PlaylistManager::removePattern(int index) {
-    if (index >= 0 && index < m_items.size()) {
-        m_items.erase(m_items.begin() + index);
+    if (index >= 0 && index < (int)m_playlist.size()) {
+        m_playlist.erase(m_playlist.begin() + index);
 
         // Adjust current index if needed
-        if (m_currentIndex >= m_items.size() && m_items.size() > 0) {
+        if (m_currentIndex >= (int)m_playlist.size() && !m_playlist.empty()) {
             m_currentIndex = 0;
+        }
+        if (m_mode == SHUFFLE) {
+            reshuffle();
         }
     }
 }
 
 void PlaylistManager::clear() {
-    m_items.clear();
+    m_playlist.clear();
     m_currentIndex = 0;
-    m_shuffleOrder.clear();
-}
-
-void PlaylistManager::movePattern(int from, int to) {
-    if (from >= 0 && from < m_items.size() && to >= 0 && to < m_items.size()) {
-        PlaylistItem item = m_items[from];
-        m_items.erase(m_items.begin() + from);
-        m_items.insert(m_items.begin() + to, item);
-    }
+    m_shuffleIndices.clear();
+    m_shuffleIndex = 0;
 }
 
 void PlaylistManager::setMode(PlaylistMode mode) {
     m_mode = mode;
-    if (mode == SHUFFLE && m_shuffleOrder.empty()) {
-        generateShuffleOrder();
-    }
-}
-
-String PlaylistManager::getNextPattern(ClearingPattern& outClearing, bool& outUseClearing) {
-    if (m_items.empty()) {
-        return "";
-    }
-
-    int index = getNextIndex();
-    if (index < 0) {
-        return ""; // No more patterns in SEQUENTIAL mode
-    }
-
-    const PlaylistItem& item = m_items[index];
-
-    // Always use random clearing pattern between playlist items
-    outClearing = getRandomClearing();
-    outUseClearing = item.useClearing;
-
-    return item.filename;
-}
-
-bool PlaylistManager::hasNext() const {
-    if (m_items.empty()) {
-        return false;
-    }
-
-    switch (m_mode) {
-        case SEQUENTIAL:
-            return m_currentIndex < m_items.size();
-        case LOOP:
-            return true; // Always has next in loop mode
-        case SHUFFLE:
-            return !m_shuffleOrder.empty() || m_currentIndex < m_items.size();
-        default:
-            return false;
+    if (mode == SHUFFLE) {
+        reshuffle();
     }
 }
 
 void PlaylistManager::reset() {
     m_currentIndex = 0;
+    m_shuffleIndex = 0;
+    m_isFirstPattern = true;
     if (m_mode == SHUFFLE) {
-        generateShuffleOrder();
+        reshuffle();
     }
 }
 
-void PlaylistManager::shuffle() {
-    setMode(SHUFFLE);
-    generateShuffleOrder();
+bool PlaylistManager::hasNext() {
+    if (m_playlist.empty()) return false;
+    
+    if (m_mode == SEQUENTIAL) {
+        return m_currentIndex < (int)m_playlist.size();
+    }
+    // LOOP and SHUFFLE always have next if not empty
+    return true;
 }
 
-const PlaylistItem& PlaylistManager::getItem(int index) const {
-    static PlaylistItem empty;
-    if (index >= 0 && index < m_items.size()) {
-        return m_items[index];
+NextPatternResult PlaylistManager::getNextPattern() {
+  NextPatternResult result;
+  result.filename = "";
+  result.clearingPattern = CLEARING_NONE;
+  result.needsClearing = false;
+
+  if (m_playlist.empty()) return result;
+
+  int index = -1;
+
+  if (m_mode == SEQUENTIAL) {
+    if (m_currentIndex >= (int)m_playlist.size()) return result;
+    index = m_currentIndex;
+    m_currentIndex++;
+  }
+  else if (m_mode == LOOP) {
+    if (m_currentIndex >= (int)m_playlist.size()) m_currentIndex = 0;
+    index = m_currentIndex;
+    m_currentIndex++;
+  }
+  else if (m_mode == SHUFFLE) {
+    if (m_shuffleIndices.empty()) reshuffle();
+    if (m_shuffleIndex >= (int)m_shuffleIndices.size()) {
+        reshuffle();
+        m_shuffleIndex = 0;
     }
-    return empty;
+    index = m_shuffleIndices[m_shuffleIndex];
+    m_shuffleIndex++;
+    m_currentIndex = index; // Sync display index
+  }
+
+  if (index >= 0 && index < (int)m_playlist.size()) {
+    result.filename = m_playlist[index].filename;
+
+    // Determine if clearing is needed
+    if (m_clearingEnabled && !m_isFirstPattern) {
+      result.needsClearing = true;
+      result.clearingPattern = getRandomClearingPattern();
+    }
+    m_isFirstPattern = false;
+  }
+
+  return result;
 }
 
-// Private methods
-
-void PlaylistManager::generateShuffleOrder() {
-    m_shuffleOrder.clear();
-
-    // Create sequential order
-    for (int i = 0; i < m_items.size(); i++) {
-        m_shuffleOrder.push_back(i);
+void PlaylistManager::reshuffle() {
+    m_shuffleIndices.clear();
+    for (int i = 0; i < (int)m_playlist.size(); i++) {
+        m_shuffleIndices.push_back(i);
     }
-
-    // Fisher-Yates shuffle algorithm
-    for (int i = m_shuffleOrder.size() - 1; i > 0; i--) {
+    
+    // Fisher-Yates shuffle
+    for (int i = m_shuffleIndices.size() - 1; i > 0; i--) {
         int j = random(0, i + 1);
-        int temp = m_shuffleOrder[i];
-        m_shuffleOrder[i] = m_shuffleOrder[j];
-        m_shuffleOrder[j] = temp;
+        int temp = m_shuffleIndices[i];
+        m_shuffleIndices[i] = m_shuffleIndices[j];
+        m_shuffleIndices[j] = temp;
     }
-
-    m_currentIndex = 0;
+    m_shuffleIndex = 0;
 }
-
-int PlaylistManager::getNextIndex() {
-    if (m_items.empty()) {
-        return -1;
-    }
-
-    int index;
-
-    switch (m_mode) {
-        case SEQUENTIAL:
-            if (m_currentIndex >= m_items.size()) {
-                return -1; // End of playlist
-            }
-            index = m_currentIndex;
-            m_currentIndex++;
-            return index;
-
-        case LOOP:
-            index = m_currentIndex;
-            m_currentIndex = (m_currentIndex + 1) % m_items.size();
-            return index;
-
-        case SHUFFLE:
-            if (m_shuffleOrder.empty()) {
-                generateShuffleOrder();
-            }
-
-            if (m_currentIndex >= m_shuffleOrder.size()) {
-                // Re-shuffle for next round in loop mode
-                generateShuffleOrder();
-            }
-
-            if (m_currentIndex < m_shuffleOrder.size()) {
-                index = m_shuffleOrder[m_currentIndex];
-                m_currentIndex++;
-                return index;
-            }
-
-            return -1;
-
-        default:
-            return -1;
-    }
-}
-
-// Persistence
 
 bool PlaylistManager::saveToFile(String playlistName) {
     JsonDocument doc;
@@ -184,30 +141,9 @@ bool PlaylistManager::saveToFile(String playlistName) {
 
     JsonArray patterns = doc["patterns"].to<JsonArray>();
 
-    for (const auto& item : m_items) {
+    for (const auto& item : m_playlist) {
         JsonObject pattern = patterns.add<JsonObject>();
         pattern["file"] = item.filename;
-
-        // Convert ClearingPattern enum to string
-        switch (item.clearing) {
-            case SPIRAL_OUTWARD:
-                pattern["clearing"] = "spiral_outward";
-                break;
-            case SPIRAL_INWARD:
-                pattern["clearing"] = "spiral_inward";
-                break;
-            case CONCENTRIC_CIRCLES:
-                pattern["clearing"] = "concentric_circles";
-                break;
-            case ZIGZAG_RADIAL:
-                pattern["clearing"] = "zigzag_radial";
-                break;
-            case PETAL_FLOWER:
-                pattern["clearing"] = "petal_flower";
-                break;
-        }
-
-        pattern["useClearing"] = item.useClearing;
     }
 
     // Ensure playlist directory exists
@@ -217,8 +153,14 @@ bool PlaylistManager::saveToFile(String playlistName) {
 
     // Save to file
     String filepath = "/playlists/" + playlistName + ".json";
-    FsFile file;
-    if (!file.open(filepath.c_str(), O_WRONLY | O_CREAT | O_TRUNC)) {
+    
+    // Remove existing file to overwrite
+    if (SD.exists(filepath)) {
+        SD.remove(filepath);
+    }
+
+    File file = SD.open(filepath.c_str(), FILE_WRITE);
+    if (!file) {
         Serial.println("Failed to create playlist file");
         return false;
     }
@@ -242,8 +184,8 @@ bool PlaylistManager::loadFromFile(String playlistName) {
         return false;
     }
 
-    FsFile file;
-    if (!file.open(filepath.c_str(), O_RDONLY)) {
+    File file = SD.open(filepath.c_str(), FILE_READ);
+    if (!file) {
         Serial.println("Failed to open playlist file");
         return false;
     }
@@ -273,43 +215,14 @@ bool PlaylistManager::loadFromFile(String playlistName) {
     // Load patterns
     JsonArray patterns = doc["patterns"];
     for (JsonObject pattern : patterns) {
-        String filename = pattern["file"] | "";
-        String clearingStr = pattern["clearing"] | "spiral_outward";
-        bool useClearing = pattern["useClearing"] | true;
-
-        // Convert string to ClearingPattern enum
-        ClearingPattern clearing = SPIRAL_OUTWARD;
-        if (clearingStr == "spiral_inward") {
-            clearing = SPIRAL_INWARD;
-        } else if (clearingStr == "concentric_circles") {
-            clearing = CONCENTRIC_CIRCLES;
-        } else if (clearingStr == "zigzag_radial") {
-            clearing = ZIGZAG_RADIAL;
-        } else if (clearingStr == "petal_flower") {
-            clearing = PETAL_FLOWER;
-        }
-
-        addPattern(filename, clearing, useClearing);
+        String file = pattern["file"].as<String>();
+        addPattern(file);
     }
 
     if (m_mode == SHUFFLE) {
-        generateShuffleOrder();
+        reshuffle();
     }
 
     Serial.println("Playlist loaded: " + filepath);
     return true;
-}
-
-ClearingPattern PlaylistManager::getRandomClearing() {
-    // Randomly select one of the 5 clearing patterns
-    int randomIndex = random(0, 5);
-
-    switch (randomIndex) {
-        case 0: return SPIRAL_OUTWARD;
-        case 1: return SPIRAL_INWARD;
-        case 2: return CONCENTRIC_CIRCLES;
-        case 3: return ZIGZAG_RADIAL;
-        case 4: return PETAL_FLOWER;
-        default: return SPIRAL_OUTWARD;
-    }
 }

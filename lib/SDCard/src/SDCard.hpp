@@ -1,5 +1,7 @@
 #pragma once
-#include <SdFat.h>
+#include <Arduino.h>
+#include <FS.h>
+#include <SD.h>
 #include <SPI.h>
 
 // SD Card SPI pins
@@ -8,23 +10,31 @@
 #define SD_CLK_PIN  18
 #define SD_MISO_PIN 19
 
-// Global SD card instance
-extern SdFat SD;
-
 // Initialize SD card - call once in setup()
 inline bool initSDCard() {
+    // Explicitly initialize SPI with defined pins
     SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
 
-    if (!SD.begin(SD_CS_PIN, SD_SCK_MHZ(25))) {
+    // Initialize SD with CS pin, SPI instance, and high frequency (20MHz)
+    if (!SD.begin(SD_CS_PIN, SPI, 20000000)) {
         Serial.println("ERROR: SD card mount failed!");
         return false;
     }
 
-    Serial.println("SD card mounted successfully");
+    uint8_t cardType = SD.cardType();
+    if (cardType == CARD_NONE) {
+        Serial.println("No SD card attached");
+        return false;
+    }
 
-    // Print card info
-    uint64_t cardSize = SD.card()->sectorCount() * 512ULL;
-    Serial.printf("SD Card Size: %llu MB\n", cardSize / (1024 * 1024));
+    Serial.print("SD Card Type: ");
+    if (cardType == CARD_MMC) Serial.println("MMC");
+    else if (cardType == CARD_SD) Serial.println("SDSC");
+    else if (cardType == CARD_SDHC) Serial.println("SDHC");
+    else Serial.println("UNKNOWN");
+
+    uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+    Serial.printf("SD Card Size: %llu MB\n", cardSize);
 
     return true;
 }
@@ -33,30 +43,27 @@ inline bool initSDCard() {
 inline void listSDFiles(const char* dirname = "/") {
     Serial.printf("\n=== Files on SD Card (%s) ===\n", dirname);
 
-    FsFile root;
-    if (!root.open(dirname)) {
+    File root = SD.open(dirname);
+    if (!root) {
         Serial.println("ERROR: Failed to open directory");
         return;
     }
 
     if (!root.isDirectory()) {
         Serial.println("ERROR: Not a directory");
-        root.close();
         return;
     }
 
-    FsFile file;
+    File file = root.openNextFile();
     int count = 0;
-    while (file.openNext(&root, O_RDONLY)) {
+    while (file) {
         if (!file.isDirectory()) {
-            char name[64];
-            file.getName(name, sizeof(name));
-            Serial.printf("  %s (%lu bytes)\n", name, (unsigned long)file.fileSize());
+            Serial.printf("  %s (%lu bytes)\n", file.name(), (unsigned long)file.size());
             count++;
         }
         file.close();
+        file = root.openNextFile();
     }
-    root.close();
-
+    
     Serial.printf("Total files: %d\n\n", count);
 }

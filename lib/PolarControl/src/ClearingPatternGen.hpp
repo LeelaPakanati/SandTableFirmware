@@ -3,12 +3,22 @@
 #include <cmath>
 
 enum ClearingPattern {
+    CLEARING_NONE,       // No clearing
     SPIRAL_OUTWARD,      // Center → edge
     SPIRAL_INWARD,       // Edge → center
     CONCENTRIC_CIRCLES,  // Series of circles from center outward
     ZIGZAG_RADIAL,       // Radial zigzag pattern
-    PETAL_FLOWER         // Flower clearing pattern
+    PETAL_FLOWER,        // Flower clearing pattern
+    CLEARING_RANDOM      // Pick a random clearing pattern (not NONE)
 };
+
+// Number of actual clearing patterns (excluding NONE and RANDOM)
+constexpr int NUM_CLEARING_PATTERNS = 5;
+
+// Get a random clearing pattern
+inline ClearingPattern getRandomClearingPattern() {
+    return static_cast<ClearingPattern>(1 + (random() % NUM_CLEARING_PATTERNS));
+}
 
 class ClearingPatternGen : public PosGen {
 public:

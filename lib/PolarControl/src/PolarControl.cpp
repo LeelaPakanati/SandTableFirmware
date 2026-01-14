@@ -1,5 +1,6 @@
 #include "PolarControl.hpp"
-#include <MotionPlanner.hpp>
+#include "Logger.hpp"
+#include <cmath>
 
 // ============================================================================
 // Constructor / Destructor
@@ -10,26 +11,6 @@ PolarControl::PolarControl() :
   m_rDriver(&Serial1, 0.12f, R_ADDR),
   m_rCDriver(&Serial1, 0.12f, RC_ADDR)
 {
-  Serial1.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
-  m_stepperEngine.init();
-
-  m_tStepper = m_stepperEngine.stepperConnectToPin(T_STEP_PIN);
-  m_tStepper->setDirectionPin(T_DIR_PIN);
-  m_tStepper->setSpeedInHz(T_MAX_STEP_VELOCITY);
-  m_tStepper->setAcceleration(T_MAX_STEP_ACCEL);
-  m_tStepper->setCurrentPosition(0);
-
-  m_rStepper = m_stepperEngine.stepperConnectToPin(R_STEP_PIN);
-  m_rStepper->setDirectionPin(R_DIR_PIN);
-  m_rStepper->setSpeedInHz(R_MAX_STEP_VELOCITY);
-  m_rStepper->setAcceleration(R_MAX_STEP_ACCEL);
-
-  // Initialize queue processing
-  m_tStepper->moveTimed(0, 0, NULL, true);
-  m_rStepper->moveTimed(0, 0, NULL, true);
-
-  m_state = UNINITIALIZED;
-  Serial.println("Motor Setup Complete");
 }
 
 PolarControl::~PolarControl() {
@@ -38,12 +19,65 @@ PolarControl::~PolarControl() {
 }
 
 // ============================================================================
-// Public Interface
+// Helpers
 // ============================================================================
+
+double PolarControl::normalizeThetaDiff(double diff) {
+  while (diff > PI) diff -= 2.0 * PI;
+  while (diff < -PI) diff += 2.0 * PI;
+  return diff;
+}
+
+double PolarControl::calcCartesianDist(PolarCord_t from, PolarCord_t to) {
+  double x0 = from.rho * cos(from.theta);
+  double y0 = from.rho * sin(from.theta);
+  double x1 = to.rho * cos(to.theta);
+  double y1 = to.rho * sin(to.theta);
+  return sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+}
+
+// ============================================================================
+// Lifecycle
+// ============================================================================
+
+void PolarControl::begin() {
+  if (m_mutex == NULL) {
+    m_mutex = xSemaphoreCreateMutex();
+  }
+
+  Serial1.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
+  m_stepperEngine.init();
+
+  m_rStepper = m_stepperEngine.stepperConnectToPin(R_STEP_PIN);
+  if (m_rStepper == nullptr) {
+    LOG("ERROR: Failed to connect R stepper\r\n");
+    return;
+  }
+  m_rStepper->setDirectionPin(R_DIR_PIN);
+  m_rStepper->setSpeedInHz((uint32_t)(STEPS_PER_MM * R_MAX_VELOCITY));
+  m_rStepper->setAcceleration((uint32_t)(STEPS_PER_MM * R_MAX_ACCEL));
+  m_rStepper->setCurrentPosition(0);
+
+  m_tStepper = m_stepperEngine.stepperConnectToPin(T_STEP_PIN);
+  if (m_tStepper == nullptr) {
+    LOG("ERROR: Failed to connect T stepper\r\n");
+    return;
+  }
+  m_tStepper->setDirectionPin(T_DIR_PIN);
+  m_tStepper->setSpeedInHz((uint32_t)(STEPS_PER_RADIAN * T_MAX_VELOCITY));
+  m_tStepper->setAcceleration((uint32_t)(STEPS_PER_RADIAN * T_MAX_ACCEL));
+  m_tStepper->setCurrentPosition(0);
+
+  // Initialize moveTimed queue processing for both steppers
+  delay(10);
+  auto rInit = m_rStepper->moveTimed(0, 0, NULL, true);
+  auto tInit = m_tStepper->moveTimed(0, 0, NULL, true);
+  LOG("Motor Setup Complete (R init=%d, T init=%d)\r\n", (int)rInit, (int)tInit);
+}
 
 void PolarControl::setupDrivers() {
   if (m_state != UNINITIALIZED) {
-    Serial.println("Setup was already done");
+    LOG("Setup was already done\r\n");
     return;
   }
 
@@ -62,22 +96,95 @@ void PolarControl::setupDrivers() {
 }
 
 void PolarControl::home() {
-  home(m_rDriver);
-  Serial.println("R Homing Done");
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
+  homeDriver(m_rDriver);
+  LOG("R Homing Done\r\n");
   m_rStepper->setCurrentPosition(0);
   m_currPos = {0.0, 0.0};
-  m_currentVelR = 0.0;
-  m_currentVelT = 0.0;
+  m_currVelR = 0.0;
+  m_currVelT = 0.0;
   m_state = IDLE;
+  xSemaphoreGive(m_mutex);
 }
 
+void PolarControl::commonSetupDriver(TMC2209Stepper &driver) {
+  driver.begin();
+  driver.toff(4);
+  driver.blank_time(24);
+  driver.en_spreadCycle(false);
+  driver.pwm_autoscale(true);
+  driver.pwm_autograd(true);
+  driver.pwm_freq(0);
+  driver.pwm_grad(14);
+  driver.pwm_ofs(36);
+  driver.pwm_reg(4);
+  driver.pwm_lim(12);
+  driver.TPWMTHRS(0xFFFFF);
+  driver.intpol(true);
+  driver.I_scale_analog(false);
+  driver.internal_Rsense(false);
+  driver.mstep_reg_select(true);
+  driver.pdn_disable(true);
+  driver.VACTUAL(0);
+  driver.shaft(false);
+}
+
+void PolarControl::homeDriver(TMC2209Stepper &driver, int speed) {
+  driver.VACTUAL(500);
+  delay(500);
+  driver.VACTUAL(0);
+  driver.VACTUAL(speed);
+
+  delay(100);
+  int sg_sum = driver.SG_RESULT();
+  int cnt = 1;
+
+  while (true) {
+    int sg = driver.SG_RESULT();
+    if (sg <= (sg_sum / cnt) * 0.75 && cnt > 15) {
+      driver.VACTUAL(0);
+      LOG("Hit Endstop, sg=%d\r\n", sg);
+      break;
+    }
+    sg_sum += sg;
+    cnt++;
+    delay(10);
+  }
+}
+
+void PolarControl::homeDriver(TMC2209Stepper &driver) {
+  LOG("Preparing Homing\r\n");
+  homeDriver(driver, 1000);
+  driver.shaft(!driver.shaft());
+  driver.VACTUAL(250);
+  delay(1000);
+  driver.VACTUAL(0);
+  driver.shaft(!driver.shaft());
+  homeDriver(driver, 250);
+}
+
+// ============================================================================
+// Pattern Control
+// ============================================================================
+
 bool PolarControl::start(PosGen *posGen) {
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
+
   if (m_state != IDLE) {
-    Serial.println("Not IDLE. Start Failed");
+    LOG("Not IDLE. Start Failed\r\n");
+    xSemaphoreGive(m_mutex);
     return false;
   }
 
-  Serial.println("Starting new PosGen");
+  // Normalize theta to prevent windup
+  double oldTheta = m_currPos.theta;
+  m_currPos.theta = fmod(oldTheta, 2.0 * PI);
+  int32_t stepDiff = round((m_currPos.theta - oldTheta) * STEPS_PER_RADIAN);
+  if (stepDiff != 0) {
+    m_tStepper->setCurrentPosition(m_tStepper->getCurrentPosition() + stepDiff);
+  }
+
+  LOG("Starting new PosGen\r\n");
 
   if (m_posGen != nullptr) {
     delete m_posGen;
@@ -85,52 +192,13 @@ bool PolarControl::start(PosGen *posGen) {
   m_posGen = posGen;
 
   m_buffer.clear();
+  m_currVelR = 0.0;
+  m_currVelT = 0.0;
   fillBuffer();
 
   m_state = RUNNING;
+  xSemaphoreGive(m_mutex);
   return true;
-}
-
-PolarControl::State_t PolarControl::getState() {
-  return m_state;
-}
-
-bool PolarControl::pause() {
-  if (m_state == RUNNING) {
-    forceStop();
-    m_state = PAUSED;
-    return true;
-  }
-  Serial.println("Not Running");
-  return false;
-}
-
-bool PolarControl::resume() {
-  if (m_state == PAUSED) {
-    m_state = RUNNING;
-    return true;
-  }
-  Serial.println("Not PAUSED");
-  return false;
-}
-
-bool PolarControl::stop() {
-  if (m_state == PAUSED || m_state == RUNNING) {
-    forceStop();
-    if (m_posGen != nullptr) {
-      delete m_posGen;
-      m_posGen = nullptr;
-    }
-    m_buffer.clear();
-    m_state = IDLE;
-    return true;
-  }
-  Serial.println("Not PAUSED Or RUNNING");
-  return false;
-}
-
-void PolarControl::setSpeed(uint8_t speed) {
-  m_speed = speed;
 }
 
 bool PolarControl::loadAndRunFile(String filePath) {
@@ -138,73 +206,117 @@ bool PolarControl::loadAndRunFile(String filePath) {
 }
 
 bool PolarControl::loadAndRunFile(String filePath, double maxRho) {
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
+
   if (m_state != IDLE) {
-    Serial.println("ERROR: Cannot load file - system not IDLE");
+    LOG("ERROR: Cannot load file - system not IDLE\r\n");
+    xSemaphoreGive(m_mutex);
     return false;
   }
 
-  Serial.print("Loading pattern file: ");
-  Serial.println(filePath);
+  LOG("Loading pattern file: %s\r\n", filePath.c_str());
 
+  // Test if file is valid
   FilePosGen *testGen = new FilePosGen(filePath, maxRho);
   PolarCord_t firstPos = testGen->getNextPos();
   if (firstPos.isNan()) {
-    Serial.println("ERROR: File is empty or invalid");
+    LOG("ERROR: File is empty or invalid\r\n");
     delete testGen;
+    xSemaphoreGive(m_mutex);
     return false;
   }
   delete testGen;
 
+  // Create the actual generator
+  if (m_posGen != nullptr) {
+    delete m_posGen;
+  }
   m_posGen = new FilePosGen(filePath, maxRho);
+
   m_buffer.clear();
+  m_currVelR = 0.0;
+  m_currVelT = 0.0;
   fillBuffer();
 
   m_state = RUNNING;
-  Serial.println("File loaded and running");
+  LOG("File loaded and running\r\n");
+  xSemaphoreGive(m_mutex);
   return true;
 }
 
-// ============================================================================
-// Main Processing Loop
-// ============================================================================
-
-bool PolarControl::processNextMove() {
-  if (m_state != RUNNING) {
-    return false;
+bool PolarControl::pause() {
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
+  if (m_state == RUNNING) {
+    forceStop();
+    m_state = PAUSED;
+    xSemaphoreGive(m_mutex);
+    return true;
   }
+  LOG("Not Running\r\n");
+  xSemaphoreGive(m_mutex);
+  return false;
+}
 
-  fillBuffer();
+bool PolarControl::resume() {
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
+  if (m_state == PAUSED) {
+    m_currVelR = 0.0;
+    m_currVelT = 0.0;
+    m_state = RUNNING;
+    xSemaphoreGive(m_mutex);
+    return true;
+  }
+  LOG("Not PAUSED\r\n");
+  xSemaphoreGive(m_mutex);
+  return false;
+}
 
-  if (m_buffer.isEmpty()) {
+bool PolarControl::stop() {
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
+
+  if (m_state == PAUSED || m_state == RUNNING) {
+    forceStop();
+
+    // Normalize theta
+    double oldTheta = m_currPos.theta;
+    m_currPos.theta = fmod(oldTheta, 2.0 * PI);
+    int32_t stepDiff = round((m_currPos.theta - oldTheta) * STEPS_PER_RADIAN);
+    if (stepDiff != 0) {
+      m_tStepper->setCurrentPosition(m_tStepper->getCurrentPosition() + stepDiff);
+    }
+
     if (m_posGen != nullptr) {
       delete m_posGen;
       m_posGen = nullptr;
     }
+    m_buffer.clear();
     m_state = IDLE;
-    Serial.println("Pattern complete");
-    return false;
+    xSemaphoreGive(m_mutex);
+    return true;
   }
+  LOG("Not PAUSED Or RUNNING\r\n");
+  xSemaphoreGive(m_mutex);
+  return false;
+}
 
-  if (!planAndQueueNextMove()) {
-    return true;  // Queue full, retry next iteration
-  }
+void PolarControl::setSpeed(uint8_t speed) {
+  m_speed = speed;
+}
 
-  return true;
+PolarControl::State_t PolarControl::getState() {
+  return m_state;
+}
+
+void PolarControl::forceStop() {
+  m_rStepper->forceStop();
+  m_tStepper->forceStop();
+  m_currVelR = 0.0;
+  m_currVelT = 0.0;
 }
 
 // ============================================================================
 // Buffer Management
 // ============================================================================
-
-void PolarControl::fillBuffer() {
-  if (m_posGen == nullptr) return;
-
-  while (!m_buffer.isFull()) {
-    PolarCord_t nextPoint = m_posGen->getNextPos();
-    if (nextPoint.isNan()) break;
-    m_buffer.push(nextPoint);
-  }
-}
 
 void PolarControl::PathBuffer::push(PolarCord_t pos) {
   if (isFull()) {
@@ -233,446 +345,302 @@ void PolarControl::PathBuffer::clear() {
   head = tail = count = 0;
 }
 
+void PolarControl::fillBuffer() {
+  if (m_posGen == nullptr) return;
+
+  while (!m_buffer.isFull()) {
+    PolarCord_t nextPoint = m_posGen->getNextPos();
+    if (nextPoint.isNan()) break;
+
+    // Filter near-duplicate points
+    PolarCord_t lastPoint = m_buffer.count > 0 ? m_buffer.peek(m_buffer.count - 1) : m_currPos;
+    double thetaDiff = normalizeThetaDiff(nextPoint.theta - lastPoint.theta);
+    if (abs(lastPoint.rho - nextPoint.rho) < 0.01 && abs(thetaDiff) < 0.001) {
+      continue;
+    }
+
+    m_buffer.push(nextPoint);
+  }
+}
+
+// ============================================================================
+// Main Processing Loop
+// ============================================================================
+
+bool PolarControl::processNextMove() {
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
+
+  if (m_state != RUNNING) {
+    xSemaphoreGive(m_mutex);
+    return false;
+  }
+
+  fillBuffer();
+
+  if (m_buffer.isEmpty()) {
+    if (m_posGen != nullptr) {
+      delete m_posGen;
+      m_posGen = nullptr;
+    }
+    m_state = IDLE;
+    LOG("Pattern complete\r\n");
+    xSemaphoreGive(m_mutex);
+    return false;
+  }
+
+  bool result = planNextMove();
+  xSemaphoreGive(m_mutex);
+  return result;
+}
+
 // ============================================================================
 // Motion Planning
 // ============================================================================
 
-bool PolarControl::planAndQueueNextMove() {
+double PolarControl::calcLookAheadEndVel(int axis) {
+  // Look at upcoming moves to determine target end velocity
+  // Gradually decelerate as we approach a direction change for smooth motion
+
+  if (m_buffer.count < 2) return 0.0;
+
+  PolarCord_t curr = m_buffer.peek(0);
+  double currDist = (axis == 0) ? (curr.rho - m_currPos.rho)
+                                : normalizeThetaDiff(curr.theta - m_currPos.theta);
+
+  if (abs(currDist) < 0.001) return 0.0;
+
+  int currDir = currDist > 0 ? 1 : -1;
+  double maxVel = (axis == 0) ? R_MAX_VELOCITY : T_MAX_VELOCITY;
+
+  // Calculate cumulative distance until direction change
+  double distToChange = abs(currDist);
+  int dirChangeAt = -1;  // Index where direction changes (-1 = no change found)
+
+  int lookAhead = std::min(8, m_buffer.count - 1);  // Look further ahead
+  for (int i = 0; i < lookAhead; i++) {
+    PolarCord_t from = m_buffer.peek(i);
+    PolarCord_t to = m_buffer.peek(i + 1);
+
+    double nextDist = (axis == 0) ? (to.rho - from.rho)
+                                  : normalizeThetaDiff(to.theta - from.theta);
+
+    if (abs(nextDist) < 0.001) continue;  // Skip tiny moves
+
+    int nextDir = nextDist > 0 ? 1 : -1;
+    if (nextDir != currDir) {
+      dirChangeAt = i;
+      break;
+    }
+    distToChange += abs(nextDist);
+  }
+
+  if (dirChangeAt < 0) {
+    // No direction change in sight - maintain good velocity
+    return maxVel * 0.8;
+  }
+
+  // Direction change coming - calculate smooth deceleration
+  // Use kinematic equation: v² = 2*a*d  =>  v = sqrt(2*a*d)
+  // This gives the velocity we can have now to decelerate to 0 over distance d
+  double accel = (axis == 0) ? R_MAX_ACCEL : T_MAX_ACCEL;
+  double safeVel = sqrt(2.0 * accel * distToChange);
+
+  // Clamp to max velocity and apply smoothing factor
+  safeVel = std::min(safeVel, maxVel * 0.8);
+
+  // If very close to direction change, ensure we're slowing down significantly
+  if (dirChangeAt == 0) {
+    safeVel = std::min(safeVel, maxVel * 0.2);
+  } else if (dirChangeAt == 1) {
+    safeVel = std::min(safeVel, maxVel * 0.4);
+  }
+
+  return safeVel;
+}
+
+bool PolarControl::planNextMove() {
   PolarCord_t target = m_buffer.peek(0);
   if (target.isNan()) return false;
 
-  PolarCord_t moveVec = target - m_currPos;
-  double rDist = moveVec.rho;
-  double tDist = moveVec.theta;
+  // Normalize theta for shortest path
+  target.theta = m_currPos.theta + normalizeThetaDiff(target.theta - m_currPos.theta);
 
-  // Handle direction changes smoothly
-  bool rDirChange = (rDist * m_lastRDir) < 0;
-  bool tDirChange = (tDist * m_lastTDir) < 0;
+  double rDist = target.rho - m_currPos.rho;
+  double tDist = target.theta - m_currPos.theta;
 
-  if (rDirChange || tDirChange) {
-    if (!handleDirectionChange(target, rDirChange, tDirChange)) {
-      return true;
+  // Skip if we're already there
+  if (abs(rDist) < 0.01 && abs(tDist) < 0.001) {
+    m_buffer.pop();
+    return true;
+  }
+
+  // Calculate target Cartesian velocity: speed 10 = 20mm/s
+  double targetCartVel = m_speed * 2.0;
+
+  // Calculate Cartesian distance
+  double cartDist = calcCartesianDist(m_currPos, target);
+  if (cartDist < 0.001) {
+    // Extremely short move (< 1 micron) - skip it
+    m_currPos = target;
+    m_buffer.pop();
+    return true;
+  }
+
+  // Enforce minimum Cartesian distance for timing purposes
+  // This prevents very fast moves for tiny distances
+  cartDist = std::max(cartDist, 0.5);  // Treat as at least 0.5mm for timing
+
+  // Segment large moves - max 10mm Cartesian distance per segment
+  const double MAX_SEGMENT_DIST = 10.0;
+  bool shouldPop = true;
+  PolarCord_t moveTarget = target;
+
+  if (cartDist > MAX_SEGMENT_DIST) {
+    double ratio = MAX_SEGMENT_DIST / cartDist;
+    moveTarget.rho = m_currPos.rho + rDist * ratio;
+    moveTarget.theta = m_currPos.theta + tDist * ratio;
+    rDist *= ratio;
+    tDist *= ratio;
+    cartDist = MAX_SEGMENT_DIST;
+    shouldPop = false;
+  }
+
+  // Calculate move time at target Cartesian velocity
+  double moveTime = cartDist / targetCartVel;
+
+  // Calculate required polar velocities for this move
+  double reqVelR = abs(rDist) / moveTime;
+  double reqVelT = abs(tDist) / moveTime;
+
+  // Clamp to motor limits, scaling proportionally
+  double scale = 1.0;
+  if (reqVelR > R_MAX_VELOCITY) scale = std::min(scale, R_MAX_VELOCITY / reqVelR);
+  if (reqVelT > T_MAX_VELOCITY) scale = std::min(scale, T_MAX_VELOCITY / reqVelT);
+
+  // Also limit angular velocity based on tangential speed at current radius
+  // At large radii, even small angular velocities create fast tangential motion
+  double avgRho = (m_currPos.rho + moveTarget.rho) / 2.0;
+  if (avgRho > 10.0 && reqVelT > 0.001) {  // Only if not near center
+    double tangentialVel = reqVelT * avgRho;  // v = omega * r
+    double maxTangentialVel = targetCartVel * 1.2;  // Allow 20% headroom
+    if (tangentialVel > maxTangentialVel) {
+      double tangentScale = maxTangentialVel / tangentialVel;
+      scale = std::min(scale, tangentScale);
     }
   }
 
-  // Apply spline smoothing if we have enough points
-  PolarCord_t smoothTarget = (m_buffer.count >= 4) ? calculateSmoothedTarget() : target;
+  double maxVelR = reqVelR * scale;
+  double maxVelT = reqVelT * scale;
 
-  // Calculate distance and dynamic time resolution
-  double cartesianDist = calculateCartesianDistance(m_currPos, smoothTarget);
-  double timeRes = calculateDynamicTimeResolution(cartesianDist);
-  double maxStepDist = R_MAX_VELOCITY * timeRes * m_speed / 5.0;
+  // Determine end velocities using look-ahead
+  double endVelR = shouldPop ? calcLookAheadEndVel(0) : maxVelR * 0.9;
+  double endVelT = shouldPop ? calcLookAheadEndVel(1) : maxVelT * 0.9;
 
-  // Subdivide large moves
-  bool shouldPop = false;
-  if (cartesianDist > maxStepDist) {
-    double ratio = maxStepDist / cartesianDist;
-    smoothTarget.rho = m_currPos.rho + (smoothTarget.rho - m_currPos.rho) * ratio;
-    smoothTarget.theta = m_currPos.theta + (smoothTarget.theta - m_currPos.theta) * ratio;
-  } else {
-    shouldPop = true;
-  }
+  // Scale end velocities to match current move's velocity ratio
+  if (maxVelR > 0.01) endVelR = std::min(endVelR, maxVelR);
+  if (maxVelT > 0.01) endVelT = std::min(endVelT, maxVelT);
 
-  // Calculate curvature-adapted speeds
-  double maxVelR = R_MAX_VELOCITY * m_speed / 5.0;
-  double maxVelT = T_MAX_VELOCITY * m_speed / 5.0;
-
-  if (m_buffer.count >= 3) {
-    PathCurvature curve = calculateCurvature(0);
-    maxVelR = adaptSpeedForCurvature(maxVelR, curve, true);
-    maxVelT = adaptSpeedForCurvature(maxVelT, curve, false);
-  }
-
-  // Slow down near center
-  if (m_currPos.rho < m_centerThreshold || smoothTarget.rho < m_centerThreshold) {
-    maxVelR *= 0.3;
-    maxVelT *= 0.3;
-  }
-
-  // Calculate look-ahead end velocities
-  double endVelR = 0.0, endVelT = 0.0;
-
-  if (m_buffer.count >= 2) {
-    PolarCord_t nextTarget = m_buffer.peek(1);
-    if (!nextTarget.isNan()) {
-      double nextRDist = nextTarget.rho - smoothTarget.rho;
-      double nextTDist = nextTarget.theta - smoothTarget.theta;
-      bool sameRDir = (nextRDist * (smoothTarget.rho - m_currPos.rho)) >= 0;
-      bool sameTDir = (nextTDist * (smoothTarget.theta - m_currPos.theta)) >= 0;
-      endVelR = sameRDir ? maxVelR * 0.5 : 0.0;
-      endVelT = sameTDir ? maxVelT * 0.5 : 0.0;
-    }
-  }
-
-  if (queueCoordinatedMove(smoothTarget, maxVelR, maxVelT, endVelR, endVelT)) {
+  // Execute the move
+  if (executeMove(rDist, tDist, m_currVelR, m_currVelT, endVelR, endVelT, maxVelR, maxVelT)) {
+    m_currPos = moveTarget;
+    m_currVelR = (rDist >= 0 ? 1 : -1) * endVelR;
+    m_currVelT = (tDist >= 0 ? 1 : -1) * endVelT;
     if (shouldPop) m_buffer.pop();
     return true;
   }
+
   return false;
-}
-
-bool PolarControl::handleDirectionChange(PolarCord_t target, bool rChange, bool tChange) {
-  PolarCord_t moveVec = target - m_currPos;
-  PolarCord_t intermediate = m_currPos;
-
-  if (rChange && abs(m_currentVelR) > 0.1) {
-    double decelDist = (m_currentVelR * m_currentVelR) / (2.0 * R_MAX_ACCEL);
-    intermediate.rho += m_lastRDir * std::min(decelDist, abs(moveVec.rho) * 0.1);
-  }
-
-  if (tChange && abs(m_currentVelT) > 0.1) {
-    double decelDist = (m_currentVelT * m_currentVelT) / (2.0 * T_MAX_ACCEL);
-    intermediate.theta += m_lastTDir * std::min(decelDist, abs(moveVec.theta) * 0.1);
-  }
-
-  return queueCoordinatedMove(intermediate,
-                              R_MAX_VELOCITY * m_speed / 10.0,
-                              T_MAX_VELOCITY * m_speed / 10.0,
-                              0.0, 0.0);
-}
-
-PolarCord_t PolarControl::calculateSmoothedTarget() {
-  PolarCord_t p0 = m_currPos;
-  PolarCord_t p1 = m_currPos;
-  PolarCord_t p2 = m_buffer.peek(0);
-  PolarCord_t p3 = m_buffer.peek(1);
-
-  if (p2.isNan() || p3.isNan()) return m_buffer.peek(0);
-
-  return interpolateSpline(0.3, p0, p1, p2, p3);
-}
-
-double PolarControl::calculateCartesianDistance(PolarCord_t from, PolarCord_t to) {
-  double x0 = from.rho * cos(from.theta);
-  double y0 = from.rho * sin(from.theta);
-  double x1 = to.rho * cos(to.theta);
-  double y1 = to.rho * sin(to.theta);
-  return sqrt(pow(x1 - x0, 2) + pow(y1 - y0, 2));
 }
 
 // ============================================================================
 // Move Execution
 // ============================================================================
 
-bool PolarControl::queueCoordinatedMove(PolarCord_t target,
-                                         double maxVelR, double maxVelT,
-                                         double endVelR, double endVelT) {
-  double rDist = target.rho - m_currPos.rho;
-  double tDist = target.theta - m_currPos.theta;
+bool PolarControl::executeMove(double rDist, double tDist,
+                                double startVelR, double startVelT,
+                                double endVelR, double endVelT,
+                                double maxVelR, double maxVelT) {
+  // Use moveTimed with our own motion planning
+  // Break move into small time segments for smooth accel/decel
 
-  if (abs(rDist) < 0.001 && abs(tDist) < 0.001) return true;
+  // Convert to steps
+  int32_t totalRSteps = round(rDist * STEPS_PER_MM);
+  int32_t totalTSteps = round(tDist * STEPS_PER_RADIAN);
 
-  MotionProfile rProfile, tProfile;
-  bool rValid = calculateMotionProfile(abs(rDist), abs(m_currentVelR), endVelR, maxVelR, R_MAX_ACCEL, rProfile);
-  bool tValid = calculateMotionProfile(abs(tDist), abs(m_currentVelT), endVelT, maxVelT, T_MAX_ACCEL, tProfile);
-
-  if (!rValid && !tValid) return true;
-
-  synchronizeProfiles(rProfile, tProfile);
-
-  int32_t rSteps = round(rDist * STEPS_PER_MM);
-  int32_t tSteps = round(tDist * STEPS_PER_RADIAN);
-  double moveTime = std::max(rProfile.totalTime, tProfile.totalTime);
-  uint32_t moveTimeMicros = std::max(1000u, (uint32_t)(moveTime * 1000000.0));
-
-  // Queue R axis
-  if (rSteps != 0) {
-    m_rStepper->setAcceleration(rProfile.accel * STEPS_PER_MM);
-    for (int retries = 1000; retries > 0; retries--) {
-      MoveTimedResultCode rCode = m_rStepper->moveTimed(rSteps, moveTimeMicros, NULL, false);
-      if (rCode == MOVE_TIMED_OK || rCode == MOVE_TIMED_EMPTY) {
-        m_lastRDir = rSteps < 0 ? -1 : 1;
-        break;
-      }
-      if (rCode != MOVE_TIMED_BUSY && rCode != MOVE_TIMED_TOO_LARGE_ERROR && rCode != MoveTimedResultCode::QueueFull) {
-        Serial.printf("R moveTimed error: %d\n", (int)rCode);
-        return false;
-      }
-      if (retries == 1) {
-        Serial.println("R moveTimed timeout");
-        return false;
-      }
-      delay(1);
-    }
-  }
-
-  // Queue T axis with commit
-  if (tSteps != 0) {
-    m_tStepper->setAcceleration(tProfile.accel * STEPS_PER_RADIAN);
-    for (int retries = 1000; retries > 0; retries--) {
-      MoveTimedResultCode tCode = m_tStepper->moveTimed(tSteps, moveTimeMicros, NULL, true);
-      if (tCode == MOVE_TIMED_OK || tCode == MOVE_TIMED_EMPTY) {
-        m_lastTDir = tSteps < 0 ? -1 : 1;
-        break;
-      }
-      if (tCode != MOVE_TIMED_BUSY && tCode != MOVE_TIMED_TOO_LARGE_ERROR && tCode != MoveTimedResultCode::QueueFull) {
-        Serial.printf("T moveTimed error: %d\n", (int)tCode);
-        return false;
-      }
-      if (retries == 1) {
-        Serial.println("T moveTimed timeout");
-        return false;
-      }
-      delay(1);
-    }
-  } else if (rSteps != 0) {
-    m_rStepper->moveTimed(0, 0, NULL, true);
-  }
-
-  m_currPos = target;
-  m_currentVelR = rValid ? rProfile.endVel * (rDist < 0 ? -1 : 1) : 0.0;
-  m_currentVelT = tValid ? tProfile.endVel * (tDist < 0 ? -1 : 1) : 0.0;
-
-  return true;
-}
-
-void PolarControl::forceStop() {
-  m_rStepper->forceStop();
-  m_tStepper->forceStop();
-  m_currentVelR = 0.0;
-  m_currentVelT = 0.0;
-}
-
-// ============================================================================
-// Motion Profile Calculation
-// ============================================================================
-
-bool PolarControl::calculateMotionProfile(double distance, double startVel, double endVel,
-                                          double maxVel, double maxAccel, MotionProfile &profile) {
-  profile.reset();
-  profile.distance = abs(distance);
-  profile.startVel = abs(startVel);
-  profile.endVel = abs(endVel);
-  profile.maxVel = abs(maxVel);
-  profile.accel = abs(maxAccel);
-  profile.decel = abs(maxAccel);
-
-  if (profile.distance < 0.0001) return false;
-
-  // Try S-curve first
-  if (m_useScurve) {
-    double maxJerk = (maxVel > 1.0) ? m_maxJerkR : m_maxJerkT;
-    SMotionProfile sProfile;
-
-    if (MotionPlanner::calculateSCurveProfile(profile.distance, profile.startVel, profile.endVel,
-                                               profile.maxVel, profile.accel, maxJerk, sProfile)) {
-      profile.accelDist = sProfile.accelDist;
-      profile.cruiseDist = sProfile.cruiseDist;
-      profile.decelDist = sProfile.decelDist;
-      profile.accelTime = sProfile.accelTime;
-      profile.cruiseTime = sProfile.cruiseTime;
-      profile.decelTime = sProfile.decelTime;
-      profile.totalTime = sProfile.totalTime;
-      return true;
-    }
-  }
-
-  // Fall back to trapezoidal
-  double accelToMaxDist = (profile.maxVel * profile.maxVel - profile.startVel * profile.startVel) / (2.0 * profile.accel);
-  double decelFromMaxDist = (profile.maxVel * profile.maxVel - profile.endVel * profile.endVel) / (2.0 * profile.decel);
-
-  if ((accelToMaxDist + decelFromMaxDist) <= profile.distance) {
-    profile.accelDist = accelToMaxDist;
-    profile.decelDist = decelFromMaxDist;
-    profile.cruiseDist = profile.distance - profile.accelDist - profile.decelDist;
-    profile.accelTime = (profile.maxVel - profile.startVel) / profile.accel;
-    profile.cruiseTime = profile.cruiseDist / profile.maxVel;
-    profile.decelTime = (profile.maxVel - profile.endVel) / profile.decel;
-  } else {
-    double a = profile.accel, d = profile.decel;
-    double v0_sq = profile.startVel * profile.startVel;
-    double vf_sq = profile.endVel * profile.endVel;
-    double vPeakSq = (profile.distance + v0_sq/(2.0*a) + vf_sq/(2.0*d)) / (1.0/(2.0*a) + 1.0/(2.0*d));
-
-    if (vPeakSq < 0) return false;
-
-    profile.maxVel = std::min(sqrt(vPeakSq), profile.maxVel);
-    profile.accelDist = (profile.maxVel * profile.maxVel - profile.startVel * profile.startVel) / (2.0 * profile.accel);
-    profile.decelDist = (profile.maxVel * profile.maxVel - profile.endVel * profile.endVel) / (2.0 * profile.decel);
-    profile.cruiseDist = 0.0;
-    profile.accelTime = (profile.maxVel - profile.startVel) / profile.accel;
-    profile.cruiseTime = 0.0;
-    profile.decelTime = (profile.maxVel - profile.endVel) / profile.decel;
-  }
-
-  profile.totalTime = profile.accelTime + profile.cruiseTime + profile.decelTime;
-  return true;
-}
-
-bool PolarControl::synchronizeProfiles(MotionProfile &p1, MotionProfile &p2, double targetTime) {
-  if (targetTime <= 0.0) targetTime = std::max(p1.totalTime, p2.totalTime);
-  adjustProfileToTime(p1, targetTime);
-  adjustProfileToTime(p2, targetTime);
-  return true;
-}
-
-bool PolarControl::adjustProfileToTime(MotionProfile &profile, double targetTime) {
-  if (profile.distance < 0.0001) {
-    profile.totalTime = targetTime;
+  if (totalRSteps == 0 && totalTSteps == 0) {
     return true;
   }
 
-  double minVel = std::max(profile.startVel, profile.endVel);
-  double maxVel = profile.maxVel;
+  // Calculate total move time at max velocity
+  double rTime = (totalRSteps != 0) ? abs(rDist) / maxVelR : 0;
+  double tTime = (totalTSteps != 0) ? abs(tDist) / maxVelT : 0;
+  double moveTime = std::max(rTime, tTime);
+  if (moveTime < 0.025) moveTime = 0.025;  // Minimum 25ms per move
 
-  for (int i = 0; i < 20; i++) {
-    double testVel = (minVel + maxVel) / 2.0;
-    double accelDist = (testVel * testVel - profile.startVel * profile.startVel) / (2.0 * profile.accel);
-    double decelDist = (testVel * testVel - profile.endVel * profile.endVel) / (2.0 * profile.decel);
+  // Use small time segments (25ms) for smooth motion
+  const double SEGMENT_TIME = 0.025;  // 25ms segments
+  int numSegments = std::max(1, (int)(moveTime / SEGMENT_TIME));
+  double actualSegmentTime = moveTime / numSegments;
 
-    if (accelDist + decelDist > profile.distance) {
-      maxVel = testVel;
-      continue;
+  // Calculate steps per segment
+  double rStepsPerSeg = (double)totalRSteps / numSegments;
+  double tStepsPerSeg = (double)totalTSteps / numSegments;
+
+  // Accumulate fractional steps to avoid drift
+  double rAccum = 0.0;
+  double tAccum = 0.0;
+
+  for (int seg = 0; seg < numSegments; seg++) {
+    // Calculate integer steps for this segment
+    rAccum += rStepsPerSeg;
+    tAccum += tStepsPerSeg;
+    int16_t rSteps = (int16_t)round(rAccum);
+    int16_t tSteps = (int16_t)round(tAccum);
+    rAccum -= rSteps;
+    tAccum -= tSteps;
+
+    // Calculate segment time in microseconds
+    // Ensure minimum 200us per step for FastAccelStepper
+    uint32_t segTimeMicros = (uint32_t)(actualSegmentTime * 1000000.0);
+    uint32_t minTimeR = (rSteps != 0) ? abs(rSteps) * 200 : 0;
+    uint32_t minTimeT = (tSteps != 0) ? abs(tSteps) * 200 : 0;
+    segTimeMicros = std::max(segTimeMicros, std::max(minTimeR, minTimeT));
+    segTimeMicros = std::max(segTimeMicros, (uint32_t)1000);  // Min 1ms
+
+    // Queue moves for both axes
+    bool rOk = (rSteps == 0);
+    bool tOk = (tSteps == 0);
+
+    for (int retry = 0; retry < 50 && (!rOk || !tOk); retry++) {
+      if (!rOk) {
+        auto code = m_rStepper->moveTimed(rSteps, segTimeMicros, NULL, false);
+        if (code == MOVE_TIMED_OK || code == MOVE_TIMED_EMPTY) {
+          rOk = true;
+        } else if (code == MoveTimedResultCode::QueueFull || code == MOVE_TIMED_BUSY) {
+          m_rStepper->moveTimed(0, 0, NULL, true);
+        }
+      }
+      if (!tOk) {
+        auto code = m_tStepper->moveTimed(tSteps, segTimeMicros, NULL, false);
+        if (code == MOVE_TIMED_OK || code == MOVE_TIMED_EMPTY) {
+          tOk = true;
+        } else if (code == MoveTimedResultCode::QueueFull || code == MOVE_TIMED_BUSY) {
+          m_tStepper->moveTimed(0, 0, NULL, true);
+        }
+      }
+      if (!rOk || !tOk) {
+        vTaskDelay(1);
+      }
     }
 
-    double cruiseDist = profile.distance - accelDist - decelDist;
-    double totalTime = (testVel - profile.startVel) / profile.accel +
-                       cruiseDist / testVel +
-                       (testVel - profile.endVel) / profile.decel;
+    // Start processing after each segment is queued
+    m_rStepper->moveTimed(0, 0, NULL, true);
+    m_tStepper->moveTimed(0, 0, NULL, true);
 
-    if (abs(totalTime - targetTime) < 0.001) {
-      profile.maxVel = testVel;
-      profile.accelDist = accelDist;
-      profile.cruiseDist = cruiseDist;
-      profile.decelDist = decelDist;
-      profile.accelTime = (testVel - profile.startVel) / profile.accel;
-      profile.cruiseTime = cruiseDist / testVel;
-      profile.decelTime = (testVel - profile.endVel) / profile.decel;
-      profile.totalTime = totalTime;
-      return true;
+    if (!rOk || !tOk) {
+      // Continue anyway - partial execution is better than stopping
     }
-
-    if (totalTime > targetTime) minVel = testVel;
-    else maxVel = testVel;
   }
 
   return true;
-}
-
-// ============================================================================
-// Speed Adaptation
-// ============================================================================
-
-PolarControl::PathCurvature PolarControl::calculateCurvature(int bufferIndex) {
-  PathCurvature result = {INFINITY, 0.0, R_MAX_VELOCITY};
-
-  if (bufferIndex + 2 >= m_buffer.count) return result;
-
-  PolarCord_t p0 = m_buffer.peek(bufferIndex);
-  PolarCord_t p1 = m_buffer.peek(bufferIndex + 1);
-  PolarCord_t p2 = m_buffer.peek(bufferIndex + 2);
-
-  // Convert to Cartesian
-  double x0 = p0.rho * cos(p0.theta), y0 = p0.rho * sin(p0.theta);
-  double x1 = p1.rho * cos(p1.theta), y1 = p1.rho * sin(p1.theta);
-  double x2 = p2.rho * cos(p2.theta), y2 = p2.rho * sin(p2.theta);
-
-  double a = sqrt(pow(x1 - x0, 2) + pow(y1 - y0, 2));
-  double b = sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2));
-  double c = sqrt(pow(x0 - x2, 2) + pow(y0 - y2, 2));
-
-  double s = (a + b + c) / 2.0;
-  double area = sqrt(s * (s - a) * (s - b) * (s - c));
-
-  if (area > 1e-6) result.radius = (a * b * c) / (4.0 * area);
-
-  double angle1 = atan2(y1 - y0, x1 - x0);
-  double angle2 = atan2(y2 - y1, x2 - x1);
-  result.angle = fabs(angle2 - angle1);
-  if (result.angle > PI) result.angle = 2.0 * PI - result.angle;
-
-  return result;
-}
-
-double PolarControl::adaptSpeedForCurvature(double baseSpeed, const PathCurvature &curve, bool isRadial) {
-  if (curve.radius < INFINITY && curve.radius > m_minCurveRadius) {
-    return std::min(baseSpeed, sqrt(m_maxCentripetalAccel * curve.radius));
-  }
-  return baseSpeed;
-}
-
-double PolarControl::calculateDynamicTimeResolution(double distance) {
-  const double MIN_RES = 0.05, MAX_RES = 0.3;
-  if (distance > 50.0) return MIN_RES;
-  if (distance < 1.0) return MAX_RES;
-  return MIN_RES + (50.0 - distance) / 49.0 * (MAX_RES - MIN_RES);
-}
-
-// ============================================================================
-// Path Smoothing
-// ============================================================================
-
-PolarCord_t PolarControl::interpolateSpline(double t, PolarCord_t p0, PolarCord_t p1,
-                                             PolarCord_t p2, PolarCord_t p3) {
-  double t2 = t * t, t3 = t2 * t;
-  double b0 = -0.5 * t3 + t2 - 0.5 * t;
-  double b1 = 1.5 * t3 - 2.5 * t2 + 1.0;
-  double b2 = -1.5 * t3 + 2.0 * t2 + 0.5 * t;
-  double b3 = 0.5 * t3 - 0.5 * t2;
-
-  double theta = b0 * p0.theta + b1 * p1.theta + b2 * p2.theta + b3 * p3.theta;
-  double rho = std::max(0.0, b0 * p0.rho + b1 * p1.rho + b2 * p2.rho + b3 * p3.rho);
-
-  return {theta, rho};
-}
-
-// ============================================================================
-// Driver Setup and Homing
-// ============================================================================
-
-void PolarControl::commonSetupDriver(TMC2209Stepper &driver) {
-  driver.begin();
-  driver.toff(4);
-  driver.blank_time(24);
-  driver.en_spreadCycle(false);
-  driver.pwm_autoscale(true);
-  driver.pwm_autograd(true);
-  driver.pwm_freq(0);
-  driver.pwm_grad(14);
-  driver.pwm_ofs(36);
-  driver.pwm_reg(4);
-  driver.pwm_lim(12);
-  driver.TPWMTHRS(0xFFFFF);
-  driver.intpol(true);
-  driver.I_scale_analog(false);
-  driver.internal_Rsense(false);
-  driver.mstep_reg_select(true);
-  driver.pdn_disable(true);
-  driver.VACTUAL(0);
-  driver.shaft(false);
-}
-
-void PolarControl::home(TMC2209Stepper &driver, int speed) {
-  driver.VACTUAL(500);
-  delay(500);
-  driver.VACTUAL(0);
-  driver.VACTUAL(speed);
-
-  delay(100);
-  int sg_sum = driver.SG_RESULT();
-  int cnt = 1;
-
-  while (true) {
-    int sg = driver.SG_RESULT();
-    if (sg <= (sg_sum / cnt) * 0.75 && cnt > 15) {
-      driver.VACTUAL(0);
-      Serial.print("Hit Endstop, sg=");
-      Serial.println(sg);
-      break;
-    }
-    sg_sum += sg;
-    cnt++;
-    delay(10);
-  }
-}
-
-void PolarControl::home(TMC2209Stepper &driver) {
-  Serial.println("Preparing Homing");
-  home(driver, 1000);
-  driver.shaft(!driver.shaft());
-  driver.VACTUAL(250);
-  delay(1000);
-  driver.VACTUAL(0);
-  driver.shaft(!driver.shaft());
-  home(driver, 250);
 }

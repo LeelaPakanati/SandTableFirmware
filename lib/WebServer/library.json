@@ -1,0 +1,8 @@
+{
+    "name": "WebServer",
+    "version": "1.0.0",
+    "dependencies": {
+        "TMCStepper": "*",
+        "FastAccelStepper": "*"
+    }
+}

@@ -22,6 +22,9 @@ PolarCord_t ClearingPatternGen::getNextPos() {
     }
 
     switch (m_pattern) {
+        case CLEARING_NONE:
+            m_complete = true;
+            return {std::nan(""), std::nan("")};
         case SPIRAL_OUTWARD:
             return generateSpiralOutward();
         case SPIRAL_INWARD:
@@ -32,6 +35,10 @@ PolarCord_t ClearingPatternGen::getNextPos() {
             return generateZigzagRadial();
         case PETAL_FLOWER:
             return generatePetalFlower();
+        case CLEARING_RANDOM:
+            // Should not happen - caller should resolve RANDOM before creating
+            m_pattern = getRandomClearingPattern();
+            return getNextPos();
         default:
             m_complete = true;
             return {std::nan(""), std::nan("")};

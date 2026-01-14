@@ -1,58 +1,67 @@
 #pragma once
-#include <Arduino.h>
 #include <vector>
+#include <Arduino.h>
+#include <SDCard.hpp>
+#include <ArduinoJson.h>
 #include <ClearingPatternGen.hpp>
 
-enum PlaylistMode {
-    SEQUENTIAL,
-    LOOP,
-    SHUFFLE
+struct PlaylistItem {
+  String filename;
+
+  PlaylistItem(String f)
+    : filename(f) {}
 };
 
-struct PlaylistItem {
-    String filename;
-    ClearingPattern clearing;
-    bool useClearing;
+enum PlaylistMode {
+  SEQUENTIAL,
+  LOOP,
+  SHUFFLE
+};
 
-    PlaylistItem() : filename(""), clearing(SPIRAL_OUTWARD), useClearing(true) {}
-    PlaylistItem(String f, ClearingPattern c, bool use = true)
-        : filename(f), clearing(c), useClearing(use) {}
+// Result from getNextPattern - includes clearing info
+struct NextPatternResult {
+  String filename;
+  ClearingPattern clearingPattern;
+  bool needsClearing;  // True if this is not the first pattern
 };
 
 class PlaylistManager {
 public:
-    PlaylistManager();
+  PlaylistManager();
 
-    // Playlist management
-    void addPattern(String filename, ClearingPattern clearing, bool useClearing = true);
-    void removePattern(int index);
-    void clear();
-    void movePattern(int from, int to);
-    int count() const { return m_items.size(); }
+  void addPattern(String filename);
+  void removePattern(int index);
+  void clear();
 
-    // Playback control
-    void setMode(PlaylistMode mode);
-    PlaylistMode getMode() const { return m_mode; }
-    String getNextPattern(ClearingPattern& outClearing, bool& outUseClearing);
-    bool hasNext() const;
-    void reset();
-    void shuffle();
-    int getCurrentIndex() const { return m_currentIndex; }
+  int count() const { return m_playlist.size(); }
+  const PlaylistItem& getItem(int index) const { return m_playlist[index]; }
 
-    // Access items
-    const PlaylistItem& getItem(int index) const;
+  void setMode(PlaylistMode mode);
+  PlaylistMode getMode() const { return m_mode; }
 
-    // Persistence
-    bool saveToFile(String playlistName);
-    bool loadFromFile(String playlistName);
+  // Clearing settings
+  void setClearingEnabled(bool enabled) { m_clearingEnabled = enabled; }
+  bool isClearingEnabled() const { return m_clearingEnabled; }
+
+  // Playlist control
+  void reset();
+  bool hasNext();
+  NextPatternResult getNextPattern();
+  int getCurrentIndex() const { return m_currentIndex; }
+
+  // File I/O
+  bool saveToFile(String filename);
+  bool loadFromFile(String filename);
 
 private:
-    std::vector<PlaylistItem> m_items;
-    PlaylistMode m_mode;
-    int m_currentIndex;
-    std::vector<int> m_shuffleOrder;
+  std::vector<PlaylistItem> m_playlist;
+  PlaylistMode m_mode;
+  int m_currentIndex;
+  bool m_clearingEnabled;
+  bool m_isFirstPattern;  // Track if this is the first pattern (no clearing needed)
 
-    void generateShuffleOrder();
-    int getNextIndex();
-    ClearingPattern getRandomClearing();
+  // Shuffle support
+  std::vector<int> m_shuffleIndices;
+  int m_shuffleIndex;
+  void reshuffle();
 };
