@@ -1,6 +1,6 @@
 #pragma once
 #include <TMCStepper.h>
-#include <FastAccelStepper.h>
+#include <MultiStepperLite.h>
 #include <PosGen.hpp>
 #include <freertos/semphr.h>
 
@@ -50,7 +50,7 @@ public:
   void setSpeed(uint8_t speed);
   uint8_t getSpeed() const { return m_speed; }
   PolarCord_t getCurrentPosition() const { return m_currPos; }  // Queued/planned position
-  PolarCord_t getActualPosition() const;  // Actual stepper position from FastAccelStepper
+  PolarCord_t getActualPosition() const;  // Actual stepper position
   double getMaxRho() const { return R_MAX; }
 
 private:
@@ -91,12 +91,18 @@ private:
   };
 
   // Hardware
-  FastAccelStepperEngine m_stepperEngine;
-  FastAccelStepper *m_tStepper = nullptr;
-  FastAccelStepper *m_rStepper = nullptr;
+  MultiStepperLite m_stepper; // Index 0: R, 1: T
   TMC2209Stepper m_tDriver;
   TMC2209Stepper m_rDriver;
   TMC2209Stepper m_rCDriver;
+
+  // Position tracking for MultiStepperLite
+  int32_t m_rPos = 0; // Current committed position (start of move)
+  int32_t m_tPos = 0;
+  int32_t m_rTargetPos = 0; // Target of current move
+  int32_t m_tTargetPos = 0;
+  int8_t m_rDir = 1; // 1 or -1
+  int8_t m_tDir = 1;
 
   // Thread safety
   SemaphoreHandle_t m_mutex = NULL;

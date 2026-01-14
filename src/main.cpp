@@ -34,7 +34,7 @@ void motorTask(void *parameter) {
 
     while (true) {
         // Process motor moves
-        bool isRunning = polarControl.processNextMove();
+        bool isBusy = polarControl.processNextMove();
 
         loopCount++;
 
@@ -52,7 +52,12 @@ void motorTask(void *parameter) {
             lastPrint = now;
         }
 
-        vTaskDelay(1);
+        // Only delay if system is idle to prevent starving the motor update loop
+        if (!isBusy) {
+            vTaskDelay(1);
+        } else {
+            taskYIELD(); // Yield to other tasks on this core if any, but return quickly
+        }
     }
 }
 

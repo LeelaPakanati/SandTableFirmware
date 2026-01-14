@@ -2,11 +2,12 @@
 #include "Logger.hpp"
 #include <cmath>
 
-// ============================================================================
+// ============================================================================ 
 // Constructor / Destructor
-// ============================================================================
+// ============================================================================ 
 
 PolarControl::PolarControl() :
+  m_stepper(2),
   m_tDriver(&Serial1, 0.12f, T_ADDR),
   m_rDriver(&Serial1, 0.12f, R_ADDR),
   m_rCDriver(&Serial1, 0.12f, RC_ADDR)
@@ -14,13 +15,11 @@ PolarControl::PolarControl() :
 }
 
 PolarControl::~PolarControl() {
-  delete m_rStepper;
-  delete m_tStepper;
 }
 
-// ============================================================================
+// ============================================================================ 
 // Helpers
-// ============================================================================
+// ============================================================================ 
 
 double PolarControl::normalizeThetaDiff(double diff) {
   while (diff > PI) diff -= 2.0 * PI;
@@ -36,9 +35,9 @@ double PolarControl::calcCartesianDist(PolarCord_t from, PolarCord_t to) {
   return sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
 }
 
-// ============================================================================
+// ============================================================================ 
 // Lifecycle
-// ============================================================================
+// ============================================================================ 
 
 void PolarControl::begin() {
   if (m_mutex == NULL) {
@@ -46,33 +45,22 @@ void PolarControl::begin() {
   }
 
   Serial1.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
-  m_stepperEngine.init();
+  
+  // Initialize Steppers
+  m_stepper.init_stepper(0, R_STEP_PIN); // Index 0 = R
+  m_stepper.init_stepper(1, T_STEP_PIN); // Index 1 = T
+  
+  pinMode(R_DIR_PIN, OUTPUT);
+  pinMode(T_DIR_PIN, OUTPUT);
+  
+  // Initialize positions
+  m_rPos = 0;
+  m_tPos = 0;
+  m_rTargetPos = 0;
+  m_tTargetPos = 0;
 
-  m_rStepper = m_stepperEngine.stepperConnectToPin(R_STEP_PIN);
-  if (m_rStepper == nullptr) {
-    LOG("ERROR: Failed to connect R stepper\r\n");
-    return;
-  }
-  m_rStepper->setDirectionPin(R_DIR_PIN);
-  m_rStepper->setSpeedInHz((uint32_t)(STEPS_PER_MM * R_MAX_VELOCITY));
-  m_rStepper->setAcceleration((uint32_t)(STEPS_PER_MM * R_MAX_ACCEL));
-  m_rStepper->setCurrentPosition(0);
-
-  m_tStepper = m_stepperEngine.stepperConnectToPin(T_STEP_PIN);
-  if (m_tStepper == nullptr) {
-    LOG("ERROR: Failed to connect T stepper\r\n");
-    return;
-  }
-  m_tStepper->setDirectionPin(T_DIR_PIN);
-  m_tStepper->setSpeedInHz((uint32_t)(STEPS_PER_RADIAN * T_MAX_VELOCITY));
-  m_tStepper->setAcceleration((uint32_t)(STEPS_PER_RADIAN * T_MAX_ACCEL));
-  m_tStepper->setCurrentPosition(0);
-
-  // Initialize moveTimed queue processing for both steppers
   delay(10);
-  auto rInit = m_rStepper->moveTimed(0, 0, NULL, true);
-  auto tInit = m_tStepper->moveTimed(0, 0, NULL, true);
-  LOG("Motor Setup Complete (R init=%d, T init=%d)\r\n", (int)rInit, (int)tInit);
+  LOG("Motor Setup Complete\r\n");
 }
 
 void PolarControl::setupDrivers() {
@@ -99,7 +87,14 @@ void PolarControl::home() {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
   homeDriver(m_rDriver);
   LOG("R Homing Done\r\n");
-  m_rStepper->setCurrentPosition(0);
+  
+  // Reset positions
+  m_rPos = 0;
+  m_rTargetPos = 0;
+  // Theta is not homed physically, just reset coordinates
+  m_tPos = 0; 
+  m_tTargetPos = 0; 
+  
   m_currPos = {0.0, 0.0};
   m_currVelR = 0.0;
   m_currVelT = 0.0;
@@ -163,9 +158,9 @@ void PolarControl::homeDriver(TMC2209Stepper &driver) {
   homeDriver(driver, 250);
 }
 
-// ============================================================================
+// ============================================================================ 
 // Pattern Control
-// ============================================================================
+// ============================================================================ 
 
 bool PolarControl::start(PosGen *posGen) {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
@@ -181,7 +176,8 @@ bool PolarControl::start(PosGen *posGen) {
   m_currPos.theta = fmod(oldTheta, 2.0 * PI);
   int32_t stepDiff = round((m_currPos.theta - oldTheta) * STEPS_PER_RADIAN);
   if (stepDiff != 0) {
-    m_tStepper->setCurrentPosition(m_tStepper->getCurrentPosition() + stepDiff);
+    m_tPos += stepDiff;
+    m_tTargetPos = m_tPos;
   }
 
   LOG("Starting new PosGen\r\n");
@@ -307,22 +303,42 @@ PolarControl::State_t PolarControl::getState() {
 }
 
 PolarCord_t PolarControl::getActualPosition() const {
-  // Get actual position from FastAccelStepper library
-  double rho = (double)m_rStepper->getCurrentPosition() / STEPS_PER_MM;
-  double theta = (double)m_tStepper->getCurrentPosition() / STEPS_PER_RADIAN;
+  // Calculate actual position from tracked target and remaining steps
+  // current = target - (remaining * dir) 
+
+  // Note: m_stepper is not const, but getActualPosition is const. 
+  // MultiStepperLite::get_remaining_steps is not const. We cast away constness for this call as it shouldn't modify state.
+  MultiStepperLite* stepper = const_cast<MultiStepperLite*>(&m_stepper);
+  
+  uint32_t rRemaining = stepper->get_remaining_steps(0);
+  uint32_t tRemaining = stepper->get_remaining_steps(1);
+  
+  int32_t rCurrentSteps = m_rTargetPos - (int32_t)rRemaining * m_rDir;
+  int32_t tCurrentSteps = m_tTargetPos - (int32_t)tRemaining * m_tDir;
+
+  double rho = (double)rCurrentSteps / STEPS_PER_MM;
+  double theta = (double)tCurrentSteps / STEPS_PER_RADIAN;
   return {theta, rho};
 }
 
 void PolarControl::forceStop() {
-  m_rStepper->forceStop();
-  m_tStepper->forceStop();
+  m_stepper.pause(0);
+  m_stepper.pause(1);
+  
+  // Update positions to where they stopped
+  PolarCord_t pos = getActualPosition();
+  m_rPos = round(pos.rho * STEPS_PER_MM);
+  m_tPos = round(pos.theta * STEPS_PER_RADIAN);
+  m_rTargetPos = m_rPos;
+  m_tTargetPos = m_tPos;
+  
   m_currVelR = 0.0;
   m_currVelT = 0.0;
 }
 
-// ============================================================================
+// ============================================================================ 
 // Buffer Management
-// ============================================================================
+// ============================================================================ 
 
 void PolarControl::PathBuffer::push(PolarCord_t pos) {
   if (isFull()) {
@@ -369,17 +385,20 @@ void PolarControl::fillBuffer() {
   }
 }
 
-// ============================================================================
+// ============================================================================ 
 // Main Processing Loop
-// ============================================================================
+// ============================================================================ 
 
 bool PolarControl::processNextMove() {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
+  
+  // Must call this frequently!
+  m_stepper.do_tasks();
 
   // Handle STOPPING state - wait for motors to finish queued moves
   if (m_state == STOPPING) {
-    bool rRunning = m_rStepper->isRunning();
-    bool tRunning = m_tStepper->isRunning();
+    bool rRunning = m_stepper.is_running(0);
+    bool tRunning = m_stepper.is_running(1);
 
     if (!rRunning && !tRunning) {
       // Motors finished - update position and transition to IDLE
@@ -391,7 +410,8 @@ bool PolarControl::processNextMove() {
       m_currPos.theta = fmod(oldTheta, 2.0 * PI);
       int32_t stepDiff = round((m_currPos.theta - oldTheta) * STEPS_PER_RADIAN);
       if (stepDiff != 0) {
-        m_tStepper->setCurrentPosition(m_tStepper->getCurrentPosition() + stepDiff);
+        m_tPos += stepDiff;
+        m_tTargetPos = m_tPos;
       }
 
       m_state = IDLE;
@@ -409,8 +429,8 @@ bool PolarControl::processNextMove() {
 
   // Wait for motors to finish current moves before planning new ones
   // This ensures timing is honored - we don't queue faster than execution
-  bool rRunning = m_rStepper->isRunning();
-  bool tRunning = m_tStepper->isRunning();
+  bool rRunning = m_stepper.is_running(0);
+  bool tRunning = m_stepper.is_running(1);
   if (rRunning || tRunning) {
     xSemaphoreGive(m_mutex);
     return true;  // Still working, check again later
@@ -434,9 +454,9 @@ bool PolarControl::processNextMove() {
   return result;
 }
 
-// ============================================================================
+// ============================================================================ 
 // Motion Planning
-// ============================================================================
+// ============================================================================ 
 
 double PolarControl::calcLookAheadEndVel(int axis) {
   // Look at upcoming moves to determine target end velocity
@@ -558,9 +578,9 @@ bool PolarControl::planNextMove() {
   return false;
 }
 
-// ============================================================================
+// ============================================================================ 
 // Move Execution
-// ============================================================================
+// ============================================================================ 
 
 bool PolarControl::executeMove(double rDist, double tDist,
                                 double startVelR, double startVelT,
@@ -593,17 +613,32 @@ bool PolarControl::executeMove(double rDist, double tDist,
   LOG("exec: rS=%d tS=%d t=%.2fs rHz=%lu tHz=%lu\r\n",
       totalRSteps, totalTSteps, moveTime, rSpeedHz, tSpeedHz);
 
-  // Set the speeds dynamically for this move
-  m_rStepper->setSpeedInHz(rSpeedHz);
-  m_tStepper->setSpeedInHz(tSpeedHz);
+  // Determine direction and set pins
+  m_rDir = (totalRSteps >= 0) ? 1 : -1;
+  m_tDir = (totalTSteps >= 0) ? 1 : -1;
+  digitalWrite(R_DIR_PIN, (m_rDir == 1) ? HIGH : LOW);
+  digitalWrite(T_DIR_PIN, (m_tDir == 1) ? HIGH : LOW);
 
-  // Calculate target positions
-  int32_t rTarget = m_rStepper->getCurrentPosition() + totalRSteps;
-  int32_t tTarget = m_tStepper->getCurrentPosition() + totalTSteps;
+  // Calculate interval in microseconds
+  uint32_t rInterval = 1000000 / rSpeedHz;
+  uint32_t tInterval = 1000000 / tSpeedHz;
 
-  // Start both moves - they'll run at calculated speeds to finish together
-  m_rStepper->moveTo(rTarget);
-  m_tStepper->moveTo(tTarget);
+  // Update target positions (committed position)
+  // We commit the move now. getActualPosition will interpolate based on remaining steps.
+  // Wait! Current m_rPos/m_tPos are where we are NOW (start of this move).
+  // We need to advance them AFTER the move? 
+  // No, the logic in getActualPosition uses m_rTargetPos.
+  // m_rTargetPos should be the END of the move we are about to start.
+  m_rTargetPos += totalRSteps; // Advance target
+  m_tTargetPos += totalTSteps;
+
+  // Start motors
+  if (totalRSteps != 0) {
+    m_stepper.start_finite(0, rInterval, abs(totalRSteps));
+  }
+  if (totalTSteps != 0) {
+    m_stepper.start_finite(1, tInterval, abs(totalTSteps));
+  }
 
   return true;
 }
