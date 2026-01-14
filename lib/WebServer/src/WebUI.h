@@ -555,6 +555,8 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.positionInterval = null;
                 this.canvas = null;
                 this.ctx = null;
+                this.path = []; // Client-side path history
+                this.lastPatternName = '';
                 this.init();
             }
 
@@ -568,6 +570,8 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.startStatusPolling();
                 this.startPositionPolling();
             }
+
+            // ... (setupConsole, connectConsole, appendToConsole remains same)
 
             setupConsole() {
                 this.consoleOutput = document.getElementById('console-output');
@@ -653,16 +657,16 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     this.setSpeed(parseInt(e.target.value));
                 });
 
-                document.getElementById('btn-start').addEventListener('click', () => this.startPattern());
+                document.getElementById('btn-start').addEventListener('click', () => { this.clearPath(); this.startPattern(); }); // Clear path on start
                 document.getElementById('btn-pause').addEventListener('click', () => this.pausePattern());
                 document.getElementById('btn-stop').addEventListener('click', () => this.stopPattern());
-                document.getElementById('btn-home').addEventListener('click', () => this.homeDevice());
+                document.getElementById('btn-home').addEventListener('click', () => { this.clearPath(); this.homeDevice(); }); // Clear on home
 
                 // Playlist event listeners
                 document.getElementById('btn-add-to-playlist').addEventListener('click', () => this.addToPlaylist());
                 document.getElementById('btn-add-all-to-playlist').addEventListener('click', () => this.addAllToPlaylist());
                 document.getElementById('btn-clear-playlist').addEventListener('click', () => this.clearPlaylist());
-                document.getElementById('btn-playlist-start').addEventListener('click', () => this.startPlaylist());
+                document.getElementById('btn-playlist-start').addEventListener('click', () => { this.clearPath(); this.startPlaylist(); });
                 document.getElementById('btn-playlist-stop').addEventListener('click', () => this.stopPlaylist());
                 document.getElementById('btn-save-playlist').addEventListener('click', () => this.savePlaylist());
                 document.getElementById('btn-load-playlist').addEventListener('click', () => this.loadPlaylist());
@@ -693,15 +697,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 });
             }
 
-            async getStatus() {
-                const response = await fetch(this.apiBase + '/status');
-                return await response.json();
-            }
-
-            async getPosition() {
-                const response = await fetch(this.apiBase + '/position');
-                return await response.json();
-            }
+            // ... (getStatus, getPosition remains same)
 
             drawTable() {
                 const ctx = this.ctx;
@@ -734,13 +730,33 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 const centerY = this.canvas.height / 2;
                 const radius = Math.min(centerX, centerY) - 20;
 
+                // Update Path History
+                if (data.current) {
+                    // Check if pattern changed, if so clear path?
+                    // Done in status check mostly, but also here:
+                    // Just accumulate points.
+                    const newPoint = { x: data.current.x, y: data.current.y };
+                    
+                    // Avoid duplicate points
+                    if (this.path.length === 0 || 
+                        Math.abs(this.path[this.path.length-1].x - newPoint.x) > 0.001 ||
+                        Math.abs(this.path[this.path.length-1].y - newPoint.y) > 0.001) {
+                        this.path.push(newPoint);
+                    }
+
+                    // Limit path history (client side limit)
+                    if (this.path.length > 500) {
+                        this.path.shift();
+                    }
+                }
+
                 // Draw path
-                if (data.path && data.path.length > 1) {
+                if (this.path.length > 1) {
                     ctx.strokeStyle = '#667eea';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
-                    for (let i = 0; i < data.path.length; i++) {
-                        const point = data.path[i];
+                    for (let i = 0; i < this.path.length; i++) {
+                        const point = this.path[i];
                         const x = centerX + (point.x - 0.5) * 2 * radius;
                         const y = centerY + (point.y - 0.5) * 2 * radius;
                         if (i === 0) {
@@ -780,16 +796,22 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     document.getElementById('position-coords').textContent = 'Position: Not available';
                 }
             }
+            
+            clearPath() {
+                this.path = [];
+            }
 
-            startPositionPolling() {
-                this.positionInterval = setInterval(async () => {
-                    try {
-                        const position = await this.getPosition();
-                        this.drawPosition(position);
-                    } catch (error) {
-                        // Silently handle errors to avoid console spam
-                    }
-                }, 500); // Update 2 times per second
+            // ... (rest of methods)
+
+
+            async getStatus() {
+                const response = await fetch(this.apiBase + '/status');
+                return await response.json();
+            }
+
+            async getPosition() {
+                const response = await fetch(this.apiBase + '/position');
+                return await response.json();
             }
 
             async startPattern() {
@@ -956,7 +978,13 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 stateBadge.textContent = status.state;
                 stateBadge.className = 'status-badge status-' + status.state.toLowerCase();
 
-                document.getElementById('current-pattern').textContent = status.currentPattern || 'None';
+                const currentPattern = status.currentPattern || 'None';
+                if (currentPattern !== this.lastPatternName) {
+                    this.clearPath();
+                    this.lastPatternName = currentPattern;
+                }
+                
+                document.getElementById('current-pattern').textContent = currentPattern;
                 document.getElementById('status-brightness').textContent = status.ledBrightness;
                 document.getElementById('uptime').textContent = this.formatUptime(status.uptime);
 
@@ -981,7 +1009,18 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.statusInterval = setInterval(async () => {
                     const status = await this.getStatus();
                     this.updateUI(status);
-                }, 1000);
+                }, 500);
+            }
+
+            startPositionPolling() {
+                this.positionInterval = setInterval(async () => {
+                    try {
+                        const position = await this.getPosition();
+                        this.drawPosition(position);
+                    } catch (error) {
+                        document.getElementById('position-coords').textContent = 'Error: ' + error.message;
+                    }
+                }, 66); // 15Hz update rate
             }
 
             // Playlist methods

@@ -96,18 +96,15 @@ private:
   TMC2209Stepper m_rDriver;
   TMC2209Stepper m_rCDriver;
 
-  // Position tracking for MultiStepperLite
-  int32_t m_rPos = 0; // Current committed position (start of move)
+  int32_t m_rPos = 0;
   int32_t m_tPos = 0;
-  int32_t m_rTargetPos = 0; // Target of current move
+  int32_t m_rTargetPos = 0;
   int32_t m_tTargetPos = 0;
-  int8_t m_rDir = 1; // 1 or -1
+  int8_t m_rDir = 1;
   int8_t m_tDir = 1;
 
-  // Thread safety
   SemaphoreHandle_t m_mutex = NULL;
 
-  // State
   State_t m_state = UNINITIALIZED;
   PosGen *m_posGen = nullptr;
   PathBuffer m_buffer;
@@ -116,6 +113,11 @@ private:
   PolarCord_t m_currPos = {0.0, 0.0};
   double m_currVelR = 0.0;    // Current R velocity (mm/s)
   double m_currVelT = 0.0;    // Current T velocity (rad/s)
+
+  // Interpolation state
+  static constexpr double MAX_SEGMENT_LEN = 2.0; // mm (max length of a single move command)
+  PolarCord_t m_pendingTarget = {NAN, NAN};      // The full target point we are interpolating towards
+  bool m_hasPendingTarget = false;
 
   // Speed setting: speed 10 = 20mm/s Cartesian velocity
   uint8_t m_speed = 5;

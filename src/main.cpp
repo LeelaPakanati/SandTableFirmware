@@ -10,22 +10,19 @@
 #define AP_SSID "SisyphusTable"
 #define AP_PWD "sandpatterns"
 
-// Core assignments
-#define MOTOR_CORE 1    // Dedicated core for motor processing
-#define WEB_CORE 0      // Core for web server (shares with WiFi)
+#define MOTOR_CORE 1
+#define WEB_CORE 0
 
 PolarControl polarControl;
 SisyphusWebServer webServer(80);
 LEDController ledController(2);
 
-// Motor task handle
 TaskHandle_t motorTaskHandle = NULL;
+TaskHandle_t webTaskHandle = NULL;
 
-// Position tracking variables (volatile for cross-core access)
 volatile unsigned long g_motorLoopCount = 0;
 volatile unsigned long g_lastPositionPrint = 0;
 
-// Motor processing task - runs on Core 1
 void motorTask(void *parameter) {
     Serial.printf("Motor task started on Core %d\n", xPortGetCoreID());
 
@@ -33,12 +30,9 @@ void motorTask(void *parameter) {
     unsigned long loopCount = 0;
 
     while (true) {
-        // Process motor moves
         bool isBusy = polarControl.processNextMove();
-
         loopCount++;
 
-        // Print position every second
         unsigned long now = millis();
         if (now - lastPrint >= 1000) {
             PolarCord_t pos = polarControl.getCurrentPosition();
@@ -52,12 +46,17 @@ void motorTask(void *parameter) {
             lastPrint = now;
         }
 
-        // Only delay if system is idle to prevent starving the motor update loop
         if (!isBusy) {
             vTaskDelay(1);
-        } else {
-            taskYIELD(); // Yield to other tasks on this core if any, but return quickly
         }
+    }
+}
+
+void webTask(void *parameter) {
+    Serial.printf("Web logic task started on Core %d\n", xPortGetCoreID());
+    while (true) {
+        webServer.loop();
+        vTaskDelay(10); // Run at ~100Hz, sufficient for UI updates
     }
 }
 
@@ -120,13 +119,24 @@ void setup() {
         MOTOR_CORE
     );
 
+    // Create web logic task on Core 0
+    Serial.println("Starting web logic task on Core 0...");
+    xTaskCreatePinnedToCore(
+        webTask,
+        "WebTask",
+        4096,
+        NULL,
+        1,
+        &webTaskHandle,
+        WEB_CORE
+    );
+
     // Initial speed
     polarControl.setSpeed(5);
 
-    Serial.printf("Main loop running on Core %d\n", xPortGetCoreID());
+    Serial.printf("Main setup done on Core %d\n", xPortGetCoreID());
 }
 
 void loop() {
-    webServer.loop();
-    delay(1);
+    vTaskDelete(NULL); // Delete the default loop task
 }

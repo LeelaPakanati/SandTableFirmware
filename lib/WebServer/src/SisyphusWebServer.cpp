@@ -50,17 +50,10 @@ SisyphusWebServer::SisyphusWebServer(uint16_t port)
       m_hasQueuedPattern(false),
       m_playlistMode(false),
       m_runningClearing(false),
-      m_lastUploadTime(0),
-      m_lastRecordedPos({0, 0}),
-      m_pathInitialized(false) {
-    m_pathX.reserve(MAX_PATH_POINTS);
-    m_pathY.reserve(MAX_PATH_POINTS);
+      m_lastUploadTime(0) {
 }
 
 void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledController) {
-    if (m_pathMutex == NULL) {
-        m_pathMutex = xSemaphoreCreateMutex();
-    }
     m_polarControl = polarControl;
     m_ledController = ledController;
 
@@ -195,7 +188,6 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
 
 void SisyphusWebServer::loop() {
     processPatternQueue();
-    recordPosition();
     broadcastLogs();
 }
 
@@ -219,7 +211,6 @@ void SisyphusWebServer::processPatternQueue() {
 
     // Handle single pattern queue
     if (m_hasQueuedPattern && stateValue == 2) { // IDLE
-        clearPathHistory();
         m_currentPattern = m_queuedPattern;  // Track running pattern
         m_polarControl->loadAndRunFile("/" + m_queuedPattern);
         m_hasQueuedPattern = false;
@@ -232,7 +223,6 @@ void SisyphusWebServer::processPatternQueue() {
         // If we just finished a clearing pattern, start the pending pattern
         if (m_runningClearing && m_pendingPattern.length() > 0) {
             LOG("Playlist: Starting pattern after clearing: %s\r\n", m_pendingPattern.c_str());
-            clearPathHistory();
             m_currentPattern = m_pendingPattern;  // Track running pattern
             m_polarControl->loadAndRunFile("/" + m_pendingPattern);
             m_pendingPattern = "";
@@ -263,7 +253,6 @@ void SisyphusWebServer::processPatternQueue() {
                 } else {
                     // No clearing needed, start pattern directly
                     LOG("Playlist: Starting pattern: %s\r\n", next.filename.c_str());
-                    clearPathHistory();
                     m_currentPattern = next.filename;  // Track running pattern
                     m_polarControl->loadAndRunFile("/" + next.filename);
                 }
@@ -887,71 +876,28 @@ void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
     PolarCord_t actualPos = m_polarControl->getActualPosition();
     double maxRho = m_polarControl->getMaxRho();
 
-    // Convert to normalized Cartesian coordinates (0-1 range)
-    double x = actualPos.rho * cos(actualPos.theta) / maxRho;
-    double y = actualPos.rho * sin(actualPos.theta) / maxRho;
-
-    // Normalize to 0-1 range (center at 0.5,0.5)
-    doc["current"]["x"] = (x + 1.0) / 2.0;
-    doc["current"]["y"] = (y + 1.0) / 2.0;
-    doc["current"]["rho"] = actualPos.rho;
-    doc["current"]["theta"] = actualPos.theta;
-
-    // Add path history
-    xSemaphoreTake(m_pathMutex, portMAX_DELAY);
-    JsonArray path = doc["path"].to<JsonArray>();
-    for (size_t i = 0; i < m_pathX.size(); ++i) {
-        JsonObject point = path.add<JsonObject>();
-        point["x"] = m_pathX[i];
-        point["y"] = m_pathY[i];
+    // Debug log (throttled)
+    static unsigned long lastLog = 0;
+    if (millis() - lastLog > 5000) {
+        lastLog = millis();
+        Serial.printf("API Position: rho=%.2f theta=%.2f\n", actualPos.rho, actualPos.theta);
     }
-    xSemaphoreGive(m_pathMutex);
 
-    String output;
-    serializeJson(doc, output);
-    request->send(200, "application/json", output);
-}
-
-void SisyphusWebServer::recordPosition() {
-    // Get actual position from stepper motors
-    PolarCord_t actualPos = m_polarControl->getActualPosition();
-    double maxRho = m_polarControl->getMaxRho();
-
-    // Only record if position has changed significantly
-    if (!m_pathInitialized ||
-        abs(actualPos.rho - m_lastRecordedPos.rho) > 2.0 ||
-        abs(actualPos.theta - m_lastRecordedPos.theta) > 0.02) {
-
-        // Convert to normalized Cartesian coordinates
+    if (isnan(actualPos.rho) || isnan(actualPos.theta)) {
+        doc["current"] = nullptr; // Explicitly send null if invalid
+    } else {
+        // Convert to normalized Cartesian coordinates (0-1 range)
         double x = actualPos.rho * cos(actualPos.theta) / maxRho;
         double y = actualPos.rho * sin(actualPos.theta) / maxRho;
 
         // Normalize to 0-1 range (center at 0.5,0.5)
-        float normX = (x + 1.0f) / 2.0f;
-        float normY = (y + 1.0f) / 2.0f;
-
-        // Add to path history
-        xSemaphoreTake(m_pathMutex, portMAX_DELAY);
-        m_pathX.push_back(normX);
-        m_pathY.push_back(normY);
-
-        // Limit path history size
-        if (m_pathX.size() > MAX_PATH_POINTS) {
-            m_pathX.erase(m_pathX.begin());
-            m_pathY.erase(m_pathY.begin());
-        }
-        xSemaphoreGive(m_pathMutex);
-
-        m_lastRecordedPos = actualPos;
-        m_pathInitialized = true;
+        doc["current"]["x"] = (x + 1.0) / 2.0;
+        doc["current"]["y"] = (y + 1.0) / 2.0;
+        doc["current"]["rho"] = actualPos.rho;
+        doc["current"]["theta"] = actualPos.theta;
     }
-}
 
-void SisyphusWebServer::clearPathHistory() {
-    xSemaphoreTake(m_pathMutex, portMAX_DELAY);
-    m_pathX.clear();
-    m_pathY.clear();
-    xSemaphoreGive(m_pathMutex);
-    m_pathInitialized = false;
-    m_lastRecordedPos = {0.0, 0.0};
+    String output;
+    serializeJson(doc, output);
+    request->send(200, "application/json", output);
 }

@@ -188,6 +188,7 @@ bool PolarControl::start(PosGen *posGen) {
   m_posGen = posGen;
 
   m_buffer.clear();
+  m_hasPendingTarget = false;
   m_currVelR = 0.0;
   m_currVelT = 0.0;
   fillBuffer();
@@ -230,6 +231,7 @@ bool PolarControl::loadAndRunFile(String filePath, double maxRho) {
   m_posGen = new FilePosGen(filePath, maxRho);
 
   m_buffer.clear();
+  m_hasPendingTarget = false;
   m_currVelR = 0.0;
   m_currVelT = 0.0;
   fillBuffer();
@@ -278,6 +280,7 @@ bool PolarControl::stop() {
       m_posGen = nullptr;
     }
     m_buffer.clear();
+    m_hasPendingTarget = false;
     m_currVelR = 0.0;
     m_currVelT = 0.0;
 
@@ -303,11 +306,6 @@ PolarControl::State_t PolarControl::getState() {
 }
 
 PolarCord_t PolarControl::getActualPosition() const {
-  // Calculate actual position from tracked target and remaining steps
-  // current = target - (remaining * dir) 
-
-  // Note: m_stepper is not const, but getActualPosition is const. 
-  // MultiStepperLite::get_remaining_steps is not const. We cast away constness for this call as it shouldn't modify state.
   MultiStepperLite* stepper = const_cast<MultiStepperLite*>(&m_stepper);
   
   uint32_t rRemaining = stepper->get_remaining_steps(0);
@@ -371,17 +369,69 @@ void PolarControl::fillBuffer() {
   if (m_posGen == nullptr) return;
 
   while (!m_buffer.isFull()) {
-    PolarCord_t nextPoint = m_posGen->getNextPos();
-    if (nextPoint.isNan()) break;
-
-    // Filter near-duplicate points
-    PolarCord_t lastPoint = m_buffer.count > 0 ? m_buffer.peek(m_buffer.count - 1) : m_currPos;
-    double thetaDiff = normalizeThetaDiff(nextPoint.theta - lastPoint.theta);
-    if (abs(lastPoint.rho - nextPoint.rho) < 0.01 && abs(thetaDiff) < 0.001) {
-      continue;
+    
+    // 1. Get the target point if we don't have one
+    if (!m_hasPendingTarget) {
+      PolarCord_t nextFilePos = m_posGen->getNextPos();
+      if (nextFilePos.isNan()) break; // End of pattern
+      m_pendingTarget = nextFilePos;
+      m_hasPendingTarget = true;
     }
 
-    m_buffer.push(nextPoint);
+    // 2. Determine where we are starting this segment from
+    // (Either current actual position OR the last queued point)
+    PolarCord_t lastPoint = (m_buffer.count > 0) ? m_buffer.peek(m_buffer.count - 1) : m_currPos;
+
+    // 3. Normalize Theta distance
+    double thetaDiff = normalizeThetaDiff(m_pendingTarget.theta - lastPoint.theta);
+    double rDiff = m_pendingTarget.rho - lastPoint.rho;
+
+    // 4. Check lengths
+    // R is simple (mm). T needs conversion to arc length at max radius? 
+    // Or just treat 1 radian ~ 100mm? 
+    // R_MAX = 450mm. 1 rad at R_MAX = 450mm. 
+    // We want safe motor speeds. T_MAX_VELOCITY is 0.3 rad/s.
+    // Let's limit T segments to something small like 0.05 rad (~2.8 deg).
+    
+    double distR = abs(rDiff);
+    double distT = abs(thetaDiff);
+    
+    // Define max steps per segment (to avoid motor stall on start)
+    // 2.0mm at 50 steps/mm = 100 steps. Safe to jump to?
+    // 0.05 rad at ~2000 steps/rad = 100 steps.
+    double maxSegR = MAX_SEGMENT_LEN; 
+    double maxSegT = 0.05; 
+
+    if (distR <= maxSegR && distT <= maxSegT) {
+      // Small enough - push the actual target
+      
+      // Filter near-duplicates only if it's the FINAL point
+      // (Otherwise interpolation logic handles small steps)
+      if (distR > 0.01 || distT > 0.001) {
+          // Normalize pending target theta relative to last point to ensure continuity
+          m_pendingTarget.theta = lastPoint.theta + thetaDiff;
+          m_buffer.push(m_pendingTarget);
+      }
+      
+      m_hasPendingTarget = false; // Done with this file point
+    } else {
+      // Too big - interpolate
+      // Calculate how many segments we need
+      double stepsR = distR / maxSegR;
+      double stepsT = distT / maxSegT;
+      double segments = std::max(stepsR, stepsT);
+      
+      // Calculate fraction for ONE segment
+      // We want to move exactly maxSeg in the dominant axis
+      double fraction = 1.0 / segments;
+      
+      PolarCord_t interpPoint;
+      interpPoint.rho = lastPoint.rho + (rDiff * fraction);
+      interpPoint.theta = lastPoint.theta + (thetaDiff * fraction);
+      
+      m_buffer.push(interpPoint);
+      // m_hasPendingTarget remains true, we continue from this new point next loop
+    }
   }
 }
 
@@ -390,10 +440,11 @@ void PolarControl::fillBuffer() {
 // ============================================================================ 
 
 bool PolarControl::processNextMove() {
-  xSemaphoreTake(m_mutex, portMAX_DELAY);
-  
-  // Must call this frequently!
+  // Must call this frequently! It handles the actual pulse generation.
+  // We call it outside the mutex so it never blocks.
   m_stepper.do_tasks();
+
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
 
   // Handle STOPPING state - wait for motors to finish queued moves
   if (m_state == STOPPING) {

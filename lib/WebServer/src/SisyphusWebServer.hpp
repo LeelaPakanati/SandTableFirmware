@@ -36,16 +36,6 @@ private:
     // File upload handling
     File m_uploadFile;
 
-    // Path history for viewer (stores points as x,y in normalized 0-1 range)
-    static constexpr int MAX_PATH_POINTS = 500;
-    std::vector<float> m_pathX;
-    std::vector<float> m_pathY;
-    PolarCord_t m_lastRecordedPos;
-    bool m_pathInitialized;
-
-    // Thread safety
-    SemaphoreHandle_t m_pathMutex = NULL;
-
     // Route handlers
     void handlePosition(AsyncWebServerRequest *request);
     void handleStatus(AsyncWebServerRequest *request);
@@ -81,8 +71,6 @@ private:
 
     // Helper methods
     void processPatternQueue();
-    void recordPosition();
-    void clearPathHistory();
     void broadcastLogs();
     String buildStatusJSON();
     String buildFileListJSON();
