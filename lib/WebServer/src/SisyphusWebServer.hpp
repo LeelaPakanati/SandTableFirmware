@@ -23,6 +23,7 @@ private:
 
     // Pattern queue management
     String m_queuedPattern;
+    String m_currentPattern;  // Currently running pattern filename
     bool m_hasQueuedPattern;
     unsigned long m_lastUploadTime;
 
@@ -76,6 +77,7 @@ private:
     void handlePlaylistSave(AsyncWebServerRequest *request);
     void handlePlaylistLoad(AsyncWebServerRequest *request);
     void handlePlaylistList(AsyncWebServerRequest *request);
+    void handlePlaylistClearing(AsyncWebServerRequest *request);
 
     // Helper methods
     void processPatternQueue();

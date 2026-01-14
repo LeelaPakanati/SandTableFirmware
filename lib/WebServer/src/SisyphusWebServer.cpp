@@ -179,6 +179,10 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
         handlePlaylistList(request);
     });
 
+    m_server.on("/api/playlist/clearing", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handlePlaylistClearing(request);
+    });
+
     // SSE for console logs
     m_events.onConnect([](AsyncEventSourceClient *client) {
         client->send("Connected to console", NULL, millis(), 1000);
@@ -216,6 +220,7 @@ void SisyphusWebServer::processPatternQueue() {
     // Handle single pattern queue
     if (m_hasQueuedPattern && stateValue == 2) { // IDLE
         clearPathHistory();
+        m_currentPattern = m_queuedPattern;  // Track running pattern
         m_polarControl->loadAndRunFile("/" + m_queuedPattern);
         m_hasQueuedPattern = false;
         m_queuedPattern = "";
@@ -228,6 +233,7 @@ void SisyphusWebServer::processPatternQueue() {
         if (m_runningClearing && m_pendingPattern.length() > 0) {
             LOG("Playlist: Starting pattern after clearing: %s\r\n", m_pendingPattern.c_str());
             clearPathHistory();
+            m_currentPattern = m_pendingPattern;  // Track running pattern
             m_polarControl->loadAndRunFile("/" + m_pendingPattern);
             m_pendingPattern = "";
             m_runningClearing = false;
@@ -258,6 +264,7 @@ void SisyphusWebServer::processPatternQueue() {
                     // No clearing needed, start pattern directly
                     LOG("Playlist: Starting pattern: %s\r\n", next.filename.c_str());
                     clearPathHistory();
+                    m_currentPattern = next.filename;  // Track running pattern
                     m_polarControl->loadAndRunFile("/" + next.filename);
                 }
             }
@@ -281,6 +288,7 @@ String SisyphusWebServer::getStateString() {
         case 2: return "IDLE";
         case 3: return "RUNNING";
         case 4: return "PAUSED";
+        case 5: return "STOPPING";
         default: return "UNKNOWN";
     }
 }
@@ -289,7 +297,7 @@ String SisyphusWebServer::buildStatusJSON() {
     JsonDocument doc;
 
     doc["state"] = getStateString();
-    doc["currentPattern"] = m_queuedPattern;
+    doc["currentPattern"] = m_currentPattern;
     uint8_t brightness = m_ledController->getBrightness();
     doc["ledBrightness"] = map(brightness, 0, 255, 0, 100);
     doc["heap"] = ESP.getFreeHeap();
@@ -714,6 +722,7 @@ void SisyphusWebServer::handlePlaylistGet(AsyncWebServerRequest *request) {
     doc["playing"] = m_playlistMode;
     doc["currentIndex"] = m_playlist.getCurrentIndex();
     doc["count"] = m_playlist.count();
+    doc["clearingEnabled"] = m_playlist.isClearingEnabled();
 
     JsonArray items = doc["items"].to<JsonArray>();
     for (int i = 0; i < m_playlist.count(); i++) {
@@ -849,6 +858,24 @@ void SisyphusWebServer::handlePlaylistList(AsyncWebServerRequest *request) {
     request->send(200, "application/json", output);
 }
 
+void SisyphusWebServer::handlePlaylistClearing(AsyncWebServerRequest *request) {
+    if (!request->hasParam("enabled", true)) {
+        request->send(400, "application/json",
+            "{\"success\":false,\"message\":\"Missing enabled parameter\"}");
+        return;
+    }
+
+    String enabledStr = request->getParam("enabled", true)->value();
+    bool enabled = (enabledStr == "true" || enabledStr == "1");
+
+    m_playlist.setClearingEnabled(enabled);
+
+    Serial.print("Clearing patterns ");
+    Serial.println(enabled ? "enabled" : "disabled");
+
+    request->send(200, "application/json", "{\"success\":true}");
+}
+
 // ============================================================================
 // Position and Path Tracking
 // ============================================================================
@@ -856,19 +883,19 @@ void SisyphusWebServer::handlePlaylistList(AsyncWebServerRequest *request) {
 void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
     JsonDocument doc;
 
-    // Get current position
-    PolarCord_t currentPos = m_polarControl->getCurrentPosition();
+    // Get actual position from stepper motors (used for display)
+    PolarCord_t actualPos = m_polarControl->getActualPosition();
     double maxRho = m_polarControl->getMaxRho();
 
     // Convert to normalized Cartesian coordinates (0-1 range)
-    double x = currentPos.rho * cos(currentPos.theta) / maxRho;
-    double y = currentPos.rho * sin(currentPos.theta) / maxRho;
+    double x = actualPos.rho * cos(actualPos.theta) / maxRho;
+    double y = actualPos.rho * sin(actualPos.theta) / maxRho;
 
     // Normalize to 0-1 range (center at 0.5,0.5)
     doc["current"]["x"] = (x + 1.0) / 2.0;
     doc["current"]["y"] = (y + 1.0) / 2.0;
-    doc["current"]["rho"] = currentPos.rho;
-    doc["current"]["theta"] = currentPos.theta;
+    doc["current"]["rho"] = actualPos.rho;
+    doc["current"]["theta"] = actualPos.theta;
 
     // Add path history
     xSemaphoreTake(m_pathMutex, portMAX_DELAY);
@@ -886,18 +913,18 @@ void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
 }
 
 void SisyphusWebServer::recordPosition() {
-    // Get current position
-    PolarCord_t currentPos = m_polarControl->getCurrentPosition();
+    // Get actual position from stepper motors
+    PolarCord_t actualPos = m_polarControl->getActualPosition();
     double maxRho = m_polarControl->getMaxRho();
 
     // Only record if position has changed significantly
     if (!m_pathInitialized ||
-        abs(currentPos.rho - m_lastRecordedPos.rho) > 2.0 ||
-        abs(currentPos.theta - m_lastRecordedPos.theta) > 0.02) {
+        abs(actualPos.rho - m_lastRecordedPos.rho) > 2.0 ||
+        abs(actualPos.theta - m_lastRecordedPos.theta) > 0.02) {
 
         // Convert to normalized Cartesian coordinates
-        double x = currentPos.rho * cos(currentPos.theta) / maxRho;
-        double y = currentPos.rho * sin(currentPos.theta) / maxRho;
+        double x = actualPos.rho * cos(actualPos.theta) / maxRho;
+        double y = actualPos.rho * sin(actualPos.theta) / maxRho;
 
         // Normalize to 0-1 range (center at 0.5,0.5)
         float normX = (x + 1.0f) / 2.0f;
@@ -915,7 +942,7 @@ void SisyphusWebServer::recordPosition() {
         }
         xSemaphoreGive(m_pathMutex);
 
-        m_lastRecordedPos = currentPos;
+        m_lastRecordedPos = actualPos;
         m_pathInitialized = true;
     }
 }

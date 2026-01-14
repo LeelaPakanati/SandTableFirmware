@@ -105,6 +105,11 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             color: white;
         }
 
+        .status-stopping {
+            background: #ed8936;
+            color: white;
+        }
+
         .slider-container {
             margin: 20px 0;
         }
@@ -438,6 +443,8 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             <div class="form-group">
                 <label for="clearing-select">Clearing Pattern</label>
                 <select id="clearing-select">
+                    <option value="none">None (No Clearing)</option>
+                    <option value="random">Random</option>
                     <option value="spiral_outward">Spiral Outward</option>
                     <option value="spiral_inward">Spiral Inward</option>
                     <option value="concentric_circles">Concentric Circles</option>
@@ -464,6 +471,10 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     <option value="loop">Loop</option>
                     <option value="shuffle">Shuffle</option>
                 </select>
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="playlist-clearing-toggle" checked style="width: auto;">
+                <label for="playlist-clearing-toggle" style="margin-bottom: 0;">Run clearing pattern between items</label>
             </div>
             <div class="button-group" style="margin-bottom: 16px;">
                 <button class="btn-primary" id="btn-playlist-start">▶ Start Playlist</button>
@@ -656,6 +667,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('btn-save-playlist').addEventListener('click', () => this.savePlaylist());
                 document.getElementById('btn-load-playlist').addEventListener('click', () => this.loadPlaylist());
                 document.getElementById('playlist-mode-select').addEventListener('change', (e) => this.setPlaylistMode(e.target.value));
+                document.getElementById('playlist-clearing-toggle').addEventListener('change', (e) => this.setPlaylistClearing(e.target.checked));
 
                 const uploadArea = document.getElementById('upload-area');
                 const fileInput = document.getElementById('file-input');
@@ -1043,6 +1055,16 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 });
             }
 
+            async setPlaylistClearing(enabled) {
+                const formData = new FormData();
+                formData.append('enabled', enabled ? 'true' : 'false');
+
+                await fetch(this.apiBase + '/playlist/clearing', {
+                    method: 'POST',
+                    body: formData
+                });
+            }
+
             async savePlaylist() {
                 const name = document.getElementById('playlist-name-input').value.trim();
                 if (!name) {
@@ -1095,6 +1117,9 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
 
                 // Update mode select
                 document.getElementById('playlist-mode-select').value = data.mode;
+
+                // Update clearing toggle
+                document.getElementById('playlist-clearing-toggle').checked = data.clearingEnabled !== false;
 
                 // Update playlist items display
                 const container = document.getElementById('playlist-items');

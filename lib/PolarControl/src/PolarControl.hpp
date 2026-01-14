@@ -22,7 +22,8 @@ public:
     INITIALIZED,
     IDLE,
     RUNNING,
-    PAUSED
+    PAUSED,
+    STOPPING  // Waiting for queued moves to complete
   };
 
   PolarControl();
@@ -48,14 +49,18 @@ public:
   State_t getState();
   void setSpeed(uint8_t speed);
   uint8_t getSpeed() const { return m_speed; }
-  PolarCord_t getCurrentPosition() const { return m_currPos; }
+  PolarCord_t getCurrentPosition() const { return m_currPos; }  // Queued/planned position
+  PolarCord_t getActualPosition() const;  // Actual stepper position from FastAccelStepper
   double getMaxRho() const { return R_MAX; }
 
 private:
   // Physical constants
-  static constexpr double R_MAX = 450.0;                        // mm, table radius
-  static constexpr int STEPS_PER_MM = 100;
-  static constexpr int STEPS_PER_RADIAN = (int)((400.0 / (2.0 * PI)) * (60.0 / 16.0));
+  static constexpr double R_MAX = 450.0;
+  static constexpr int T_MICROSTEPS = 2;
+  static constexpr int R_MICROSTEPS = 2;
+
+  static constexpr int STEPS_PER_MM = 50 * R_MICROSTEPS;
+  static constexpr int STEPS_PER_RADIAN = (int)((200.0 * T_MICROSTEPS / (2.0 * PI)) * (60.0 / 16.0));
 
   // Motor limits (these clamp the maximum motor speeds)
   // R: 450mm in 20s = 22.5 mm/s max
@@ -66,9 +71,7 @@ private:
   static constexpr double T_MAX_ACCEL = 1.0;                    // rad/s² (gentler accel)
 
   // Driver settings
-  static constexpr int T_MICROSTEPS = 2;
   static constexpr int T_CURRENT = 800;
-  static constexpr int R_MICROSTEPS = 2;
   static constexpr int R_CURRENT = 500;
 
   // Look-ahead buffer

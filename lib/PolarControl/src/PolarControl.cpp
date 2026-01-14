@@ -275,22 +275,21 @@ bool PolarControl::stop() {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
 
   if (m_state == PAUSED || m_state == RUNNING) {
-    forceStop();
-
-    // Normalize theta
-    double oldTheta = m_currPos.theta;
-    m_currPos.theta = fmod(oldTheta, 2.0 * PI);
-    int32_t stepDiff = round((m_currPos.theta - oldTheta) * STEPS_PER_RADIAN);
-    if (stepDiff != 0) {
-      m_tStepper->setCurrentPosition(m_tStepper->getCurrentPosition() + stepDiff);
-    }
-
+    // Don't force stop - let queued moves finish gracefully
+    // Just stop generating new moves
     if (m_posGen != nullptr) {
       delete m_posGen;
       m_posGen = nullptr;
     }
     m_buffer.clear();
-    m_state = IDLE;
+    m_currVelR = 0.0;
+    m_currVelT = 0.0;
+
+    // Transition to STOPPING state - processNextMove will transition to IDLE
+    // when motors finish their queued moves
+    m_state = STOPPING;
+    LOG("Stopping - waiting for queued moves to complete\r\n");
+
     xSemaphoreGive(m_mutex);
     return true;
   }
@@ -305,6 +304,13 @@ void PolarControl::setSpeed(uint8_t speed) {
 
 PolarControl::State_t PolarControl::getState() {
   return m_state;
+}
+
+PolarCord_t PolarControl::getActualPosition() const {
+  // Get actual position from FastAccelStepper library
+  double rho = (double)m_rStepper->getCurrentPosition() / STEPS_PER_MM;
+  double theta = (double)m_tStepper->getCurrentPosition() / STEPS_PER_RADIAN;
+  return {theta, rho};
 }
 
 void PolarControl::forceStop() {
@@ -370,9 +376,44 @@ void PolarControl::fillBuffer() {
 bool PolarControl::processNextMove() {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
 
+  // Handle STOPPING state - wait for motors to finish queued moves
+  if (m_state == STOPPING) {
+    bool rRunning = m_rStepper->isRunning();
+    bool tRunning = m_tStepper->isRunning();
+
+    if (!rRunning && !tRunning) {
+      // Motors finished - update position and transition to IDLE
+      PolarCord_t actualPos = getActualPosition();
+      m_currPos = actualPos;
+
+      // Normalize theta
+      double oldTheta = m_currPos.theta;
+      m_currPos.theta = fmod(oldTheta, 2.0 * PI);
+      int32_t stepDiff = round((m_currPos.theta - oldTheta) * STEPS_PER_RADIAN);
+      if (stepDiff != 0) {
+        m_tStepper->setCurrentPosition(m_tStepper->getCurrentPosition() + stepDiff);
+      }
+
+      m_state = IDLE;
+      LOG("Stop complete - now IDLE\r\n");
+    }
+
+    xSemaphoreGive(m_mutex);
+    return false;
+  }
+
   if (m_state != RUNNING) {
     xSemaphoreGive(m_mutex);
     return false;
+  }
+
+  // Wait for motors to finish current moves before planning new ones
+  // This ensures timing is honored - we don't queue faster than execution
+  bool rRunning = m_rStepper->isRunning();
+  bool tRunning = m_tStepper->isRunning();
+  if (rRunning || tRunning) {
+    xSemaphoreGive(m_mutex);
+    return true;  // Still working, check again later
   }
 
   fillBuffer();
@@ -474,78 +515,43 @@ bool PolarControl::planNextMove() {
     return true;
   }
 
-  // Calculate target Cartesian velocity: speed 10 = 20mm/s
-  double targetCartVel = m_speed * 2.0;
+  // Simple velocity model: use motor speed limits directly
+  // Speed slider (1-10) scales the max velocities: speed 10 = full speed
+  double speedFactor = m_speed / 10.0;
+  double maxVelR = R_MAX_VELOCITY * speedFactor;
+  double maxVelT = T_MAX_VELOCITY * speedFactor;
 
-  // Calculate Cartesian distance
-  double cartDist = calcCartesianDist(m_currPos, target);
-  if (cartDist < 0.001) {
-    // Extremely short move (< 1 micron) - skip it
-    m_currPos = target;
-    m_buffer.pop();
-    return true;
-  }
+  // Calculate time needed for each axis at their max velocities
+  double timeR = (abs(rDist) > 0.01) ? abs(rDist) / maxVelR : 0;
+  double timeT = (abs(tDist) > 0.001) ? abs(tDist) / maxVelT : 0;
 
-  // Enforce minimum Cartesian distance for timing purposes
-  // This prevents very fast moves for tiny distances
-  cartDist = std::max(cartDist, 0.5);  // Treat as at least 0.5mm for timing
+  // Use the longer time (slower axis dominates) to keep axes synchronized
+  double moveTime = std::max(timeR, timeT);
+  moveTime = std::max(moveTime, 0.025);  // Minimum 25ms per move
 
-  // Segment large moves - max 10mm Cartesian distance per segment
-  const double MAX_SEGMENT_DIST = 10.0;
-  bool shouldPop = true;
-  PolarCord_t moveTarget = target;
+  // Calculate actual velocities used (may be slower than max for the faster axis)
+  double actualVelR = (abs(rDist) > 0.01) ? abs(rDist) / moveTime : 0;
+  double actualVelT = (abs(tDist) > 0.001) ? abs(tDist) / moveTime : 0;
 
-  if (cartDist > MAX_SEGMENT_DIST) {
-    double ratio = MAX_SEGMENT_DIST / cartDist;
-    moveTarget.rho = m_currPos.rho + rDist * ratio;
-    moveTarget.theta = m_currPos.theta + tDist * ratio;
-    rDist *= ratio;
-    tDist *= ratio;
-    cartDist = MAX_SEGMENT_DIST;
-    shouldPop = false;
-  }
-
-  // Calculate move time at target Cartesian velocity
-  double moveTime = cartDist / targetCartVel;
-
-  // Calculate required polar velocities for this move
-  double reqVelR = abs(rDist) / moveTime;
-  double reqVelT = abs(tDist) / moveTime;
-
-  // Clamp to motor limits, scaling proportionally
-  double scale = 1.0;
-  if (reqVelR > R_MAX_VELOCITY) scale = std::min(scale, R_MAX_VELOCITY / reqVelR);
-  if (reqVelT > T_MAX_VELOCITY) scale = std::min(scale, T_MAX_VELOCITY / reqVelT);
-
-  // Also limit angular velocity based on tangential speed at current radius
-  // At large radii, even small angular velocities create fast tangential motion
-  double avgRho = (m_currPos.rho + moveTarget.rho) / 2.0;
-  if (avgRho > 10.0 && reqVelT > 0.001) {  // Only if not near center
-    double tangentialVel = reqVelT * avgRho;  // v = omega * r
-    double maxTangentialVel = targetCartVel * 1.2;  // Allow 20% headroom
-    if (tangentialVel > maxTangentialVel) {
-      double tangentScale = maxTangentialVel / tangentialVel;
-      scale = std::min(scale, tangentScale);
-    }
-  }
-
-  double maxVelR = reqVelR * scale;
-  double maxVelT = reqVelT * scale;
+  // Debug: log velocity calculations and positions with timestamp
+  PolarCord_t actualPos = getActualPosition();
+  LOG("[%lu] plan: rD=%.1f tD=%.2f t=%.2fs | queued(r=%.1f t=%.2f) actual(r=%.1f t=%.2f)\r\n",
+      millis(), rDist, tDist, moveTime, m_currPos.rho, m_currPos.theta, actualPos.rho, actualPos.theta);
 
   // Determine end velocities using look-ahead
-  double endVelR = shouldPop ? calcLookAheadEndVel(0) : maxVelR * 0.9;
-  double endVelT = shouldPop ? calcLookAheadEndVel(1) : maxVelT * 0.9;
+  double endVelR = calcLookAheadEndVel(0);
+  double endVelT = calcLookAheadEndVel(1);
 
-  // Scale end velocities to match current move's velocity ratio
-  if (maxVelR > 0.01) endVelR = std::min(endVelR, maxVelR);
-  if (maxVelT > 0.01) endVelT = std::min(endVelT, maxVelT);
+  // Cap end velocities to current move's velocities
+  endVelR = std::min(endVelR, actualVelR);
+  endVelT = std::min(endVelT, actualVelT);
 
   // Execute the move
-  if (executeMove(rDist, tDist, m_currVelR, m_currVelT, endVelR, endVelT, maxVelR, maxVelT)) {
-    m_currPos = moveTarget;
+  if (executeMove(rDist, tDist, m_currVelR, m_currVelT, endVelR, endVelT, actualVelR, actualVelT)) {
+    m_currPos = target;
     m_currVelR = (rDist >= 0 ? 1 : -1) * endVelR;
     m_currVelT = (tDist >= 0 ? 1 : -1) * endVelT;
-    if (shouldPop) m_buffer.pop();
+    m_buffer.pop();
     return true;
   }
 
@@ -560,9 +566,6 @@ bool PolarControl::executeMove(double rDist, double tDist,
                                 double startVelR, double startVelT,
                                 double endVelR, double endVelT,
                                 double maxVelR, double maxVelT) {
-  // Use moveTimed with our own motion planning
-  // Break move into small time segments for smooth accel/decel
-
   // Convert to steps
   int32_t totalRSteps = round(rDist * STEPS_PER_MM);
   int32_t totalTSteps = round(tDist * STEPS_PER_RADIAN);
@@ -571,76 +574,36 @@ bool PolarControl::executeMove(double rDist, double tDist,
     return true;
   }
 
-  // Calculate total move time at max velocity
-  double rTime = (totalRSteps != 0) ? abs(rDist) / maxVelR : 0;
-  double tTime = (totalTSteps != 0) ? abs(tDist) / maxVelT : 0;
+  // Calculate total move time - slower axis dominates
+  double rTime = (abs(rDist) > 0.01) ? abs(rDist) / maxVelR : 0;
+  double tTime = (abs(tDist) > 0.001) ? abs(tDist) / maxVelT : 0;
   double moveTime = std::max(rTime, tTime);
-  if (moveTime < 0.025) moveTime = 0.025;  // Minimum 25ms per move
+  if (moveTime < 0.010) moveTime = 0.010;  // Minimum 10ms per move
 
-  // Use small time segments (25ms) for smooth motion
-  const double SEGMENT_TIME = 0.025;  // 25ms segments
-  int numSegments = std::max(1, (int)(moveTime / SEGMENT_TIME));
-  double actualSegmentTime = moveTime / numSegments;
+  // Calculate the actual speed needed for each axis to finish in moveTime
+  // Speed in Hz = steps / seconds
+  uint32_t rSpeedHz = (totalRSteps != 0) ? (uint32_t)(abs(totalRSteps) / moveTime) : 1;
+  uint32_t tSpeedHz = (totalTSteps != 0) ? (uint32_t)(abs(totalTSteps) / moveTime) : 1;
 
-  // Calculate steps per segment
-  double rStepsPerSeg = (double)totalRSteps / numSegments;
-  double tStepsPerSeg = (double)totalTSteps / numSegments;
+  // Ensure minimum speed (1 Hz) to avoid divide by zero
+  rSpeedHz = std::max(rSpeedHz, (uint32_t)1);
+  tSpeedHz = std::max(tSpeedHz, (uint32_t)1);
 
-  // Accumulate fractional steps to avoid drift
-  double rAccum = 0.0;
-  double tAccum = 0.0;
+  // Debug: log the move parameters
+  LOG("exec: rS=%d tS=%d t=%.2fs rHz=%lu tHz=%lu\r\n",
+      totalRSteps, totalTSteps, moveTime, rSpeedHz, tSpeedHz);
 
-  for (int seg = 0; seg < numSegments; seg++) {
-    // Calculate integer steps for this segment
-    rAccum += rStepsPerSeg;
-    tAccum += tStepsPerSeg;
-    int16_t rSteps = (int16_t)round(rAccum);
-    int16_t tSteps = (int16_t)round(tAccum);
-    rAccum -= rSteps;
-    tAccum -= tSteps;
+  // Set the speeds dynamically for this move
+  m_rStepper->setSpeedInHz(rSpeedHz);
+  m_tStepper->setSpeedInHz(tSpeedHz);
 
-    // Calculate segment time in microseconds
-    // Ensure minimum 200us per step for FastAccelStepper
-    uint32_t segTimeMicros = (uint32_t)(actualSegmentTime * 1000000.0);
-    uint32_t minTimeR = (rSteps != 0) ? abs(rSteps) * 200 : 0;
-    uint32_t minTimeT = (tSteps != 0) ? abs(tSteps) * 200 : 0;
-    segTimeMicros = std::max(segTimeMicros, std::max(minTimeR, minTimeT));
-    segTimeMicros = std::max(segTimeMicros, (uint32_t)1000);  // Min 1ms
+  // Calculate target positions
+  int32_t rTarget = m_rStepper->getCurrentPosition() + totalRSteps;
+  int32_t tTarget = m_tStepper->getCurrentPosition() + totalTSteps;
 
-    // Queue moves for both axes
-    bool rOk = (rSteps == 0);
-    bool tOk = (tSteps == 0);
-
-    for (int retry = 0; retry < 50 && (!rOk || !tOk); retry++) {
-      if (!rOk) {
-        auto code = m_rStepper->moveTimed(rSteps, segTimeMicros, NULL, false);
-        if (code == MOVE_TIMED_OK || code == MOVE_TIMED_EMPTY) {
-          rOk = true;
-        } else if (code == MoveTimedResultCode::QueueFull || code == MOVE_TIMED_BUSY) {
-          m_rStepper->moveTimed(0, 0, NULL, true);
-        }
-      }
-      if (!tOk) {
-        auto code = m_tStepper->moveTimed(tSteps, segTimeMicros, NULL, false);
-        if (code == MOVE_TIMED_OK || code == MOVE_TIMED_EMPTY) {
-          tOk = true;
-        } else if (code == MoveTimedResultCode::QueueFull || code == MOVE_TIMED_BUSY) {
-          m_tStepper->moveTimed(0, 0, NULL, true);
-        }
-      }
-      if (!rOk || !tOk) {
-        vTaskDelay(1);
-      }
-    }
-
-    // Start processing after each segment is queued
-    m_rStepper->moveTimed(0, 0, NULL, true);
-    m_tStepper->moveTimed(0, 0, NULL, true);
-
-    if (!rOk || !tOk) {
-      // Continue anyway - partial execution is better than stopping
-    }
-  }
+  // Start both moves - they'll run at calculated speeds to finish together
+  m_rStepper->moveTo(rTarget);
+  m_tStepper->moveTo(tTarget);
 
   return true;
 }
