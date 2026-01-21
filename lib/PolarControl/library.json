@@ -1,0 +1,10 @@
+{
+  "name": "PolarControl",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "name": "TMCStepper",
+      "version": "^0.7.3"
+    }
+  ]
+}
