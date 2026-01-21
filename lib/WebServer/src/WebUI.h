@@ -414,6 +414,51 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             margin-bottom: 16px;
         }
 
+        /* File Progress Bar */
+        .progress-container {
+            margin-top: 8px;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--bg-dark);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            font-size: 0.75em;
+            text-align: center;
+            margin-top: 4px;
+            opacity: 0.8;
+        }
+
+        .status-progress-bar {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-card);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+
+        .status-progress-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
         .np-controls {
             display: flex;
             justify-content: center;
@@ -772,6 +817,9 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 <div class="status-item">
                     <div class="status-label">Pattern</div>
                     <div class="status-value" id="current-pattern" style="font-size: 0.9em;">None</div>
+                    <div class="status-progress-bar" id="file-progress-container" style="display: none;">
+                        <div class="status-progress-fill" id="file-progress-bar"></div>
+                    </div>
                 </div>
                 <div class="status-item">
                     <div class="status-label">Brightness</div>
@@ -859,6 +907,12 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     <div class="np-label">Now Playing</div>
                     <div class="np-title" id="now-playing-name">No pattern playing</div>
                     <div class="np-progress" id="playlist-progress">0 / 0</div>
+                    <div class="progress-container" id="np-file-progress-container" style="display: none;">
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" id="np-file-progress-bar"></div>
+                        </div>
+                        <div class="progress-text" id="np-file-progress-text">0%</div>
+                    </div>
                     <div class="np-controls">
                         <button class="np-btn np-btn-small" id="btn-playlist-prev">⏮</button>
                         <button class="np-btn np-btn-main" id="btn-playlist-start">▶</button>
@@ -1339,6 +1393,26 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 if (document.activeElement !== slider) {
                     slider.value = status.ledBrightness;
                     document.getElementById('brightness-value').textContent = status.ledBrightness + '%';
+                }
+
+                // Update file progress bar
+                const progress = status.progress;
+                const isRunning = status.state === 'RUNNING' || status.state === 'CLEARING';
+                const statusProgressContainer = document.getElementById('file-progress-container');
+                const statusProgressBar = document.getElementById('file-progress-bar');
+                const npProgressContainer = document.getElementById('np-file-progress-container');
+                const npProgressBar = document.getElementById('np-file-progress-bar');
+                const npProgressText = document.getElementById('np-file-progress-text');
+
+                if (isRunning && progress >= 0) {
+                    statusProgressContainer.style.display = 'block';
+                    statusProgressBar.style.width = progress + '%';
+                    npProgressContainer.style.display = 'block';
+                    npProgressBar.style.width = progress + '%';
+                    npProgressText.textContent = progress + '%';
+                } else {
+                    statusProgressContainer.style.display = 'none';
+                    npProgressContainer.style.display = 'none';
                 }
             }
 

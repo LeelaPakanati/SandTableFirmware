@@ -326,6 +326,11 @@ PolarCord_t PolarControl::getActualPosition() {
   return {theta, rho};
 }
 
+int PolarControl::getProgressPercent() const {
+  if (!m_posGen) return -1;
+  return m_posGen->getProgressPercent();
+}
+
 void PolarControl::forceStop() {
   m_planner.stop();
 }

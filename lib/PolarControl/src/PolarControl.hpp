@@ -79,6 +79,7 @@ public:
   PolarCord_t getActualPosition();
   uint32_t getSegmentsCompleted() const { return m_planner.getCompletedCount(); }
   double getMaxRho() const { return R_MAX; }
+  int getProgressPercent() const;
 
   // Reset theta to zero (current position becomes new origin)
   void resetTheta();

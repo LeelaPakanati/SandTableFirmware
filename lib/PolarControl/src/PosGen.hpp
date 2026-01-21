@@ -8,6 +8,9 @@ class PosGen {
   public:
     virtual ~PosGen() = default;
     virtual PolarCord_t getNextPos() = 0;
+
+    // Progress tracking: returns 0-100 percentage, -1 if unknown
+    virtual int getProgressPercent() const { return -1; }
 };
 
 class FilePosGen : public PosGen {
@@ -27,10 +30,11 @@ class FilePosGen : public PosGen {
         Serial.print("ERROR: Could not open file: ");
         Serial.println(filePath);
       } else {
+        m_fileSize = m_file.size();
         Serial.print("Opened file: ");
         Serial.print(filePath);
         Serial.print(" (Size: ");
-        Serial.print(m_file.size());
+        Serial.print(m_fileSize);
         Serial.println(" bytes)");
       }
     }
@@ -88,9 +92,15 @@ class FilePosGen : public PosGen {
       }
     }
 
+    int getProgressPercent() const override {
+      if (!m_file || m_fileSize == 0) return -1;
+      return (int)((m_file.position() * 100) / m_fileSize);
+    }
+
   private:
     int m_currLine = 0;
     String m_currFile = "";
     double m_maxRho;
     File m_file;
+    size_t m_fileSize = 0;
 };

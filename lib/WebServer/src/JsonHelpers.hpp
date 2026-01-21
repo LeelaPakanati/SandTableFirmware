@@ -10,6 +10,7 @@ public:
         JsonDocument doc;
         doc["state"] = getStateString(polarControl->getState());
         doc["currentPattern"] = currentPattern;
+        doc["progress"] = polarControl->getProgressPercent();
         uint8_t brightness = ledController->getBrightness();
         doc["ledBrightness"] = map(brightness, 0, 255, 0, 100);
         doc["heap"] = ESP.getFreeHeap();
