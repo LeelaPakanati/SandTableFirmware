@@ -1,43 +1,31 @@
 #include "PolarControl.hpp"
+#include "PolarUtils.hpp"
+#include "MakeUnique.hpp"
 #include "Logger.hpp"
 #include <cmath>
+#include <SD.h>
+#include <ArduinoJson.h>
 
-// ============================================================================ 
+// ============================================================================
 // Constructor / Destructor
-// ============================================================================ 
+// ============================================================================
 
 PolarControl::PolarControl() :
-  m_stepper(2),
   m_tDriver(&Serial1, 0.12f, T_ADDR),
   m_rDriver(&Serial1, 0.12f, R_ADDR),
   m_rCDriver(&Serial1, 0.12f, RC_ADDR)
 {
+  // Initialize default driver settings
+  m_tDriverSettings.current = 1200;  // Theta motor
+  m_rDriverSettings.current = 500;   // Rho motor
 }
 
 PolarControl::~PolarControl() {
 }
 
-// ============================================================================ 
-// Helpers
-// ============================================================================ 
-
-double PolarControl::normalizeThetaDiff(double diff) {
-  while (diff > PI) diff -= 2.0 * PI;
-  while (diff < -PI) diff += 2.0 * PI;
-  return diff;
-}
-
-double PolarControl::calcCartesianDist(PolarCord_t from, PolarCord_t to) {
-  double x0 = from.rho * cos(from.theta);
-  double y0 = from.rho * sin(from.theta);
-  double x1 = to.rho * cos(to.theta);
-  double y1 = to.rho * sin(to.theta);
-  return sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-}
-
-// ============================================================================ 
+// ============================================================================
 // Lifecycle
-// ============================================================================ 
+// ============================================================================
 
 void PolarControl::begin() {
   if (m_mutex == NULL) {
@@ -45,22 +33,34 @@ void PolarControl::begin() {
   }
 
   Serial1.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
-  
-  // Initialize Steppers
-  m_stepper.init_stepper(0, R_STEP_PIN); // Index 0 = R
-  m_stepper.init_stepper(1, T_STEP_PIN); // Index 1 = T
-  
-  pinMode(R_DIR_PIN, OUTPUT);
-  pinMode(T_DIR_PIN, OUTPUT);
-  
-  // Initialize positions
-  m_rPos = 0;
-  m_tPos = 0;
-  m_rTargetPos = 0;
-  m_tTargetPos = 0;
+
+  // Load saved tuning settings (if any)
+  loadTuningSettings();
+
+  // Initialize motion planner with separate axis limits
+  m_planner.init(
+    STEPS_PER_MM,
+    STEPS_PER_RADIAN,
+    R_MAX,
+    // Rho limits (mm)
+    m_motionSettings.rMaxVelocity,
+    m_motionSettings.rMaxAccel,
+    m_motionSettings.rMaxJerk,
+    // Theta limits (rad)
+    m_motionSettings.tMaxVelocity,
+    m_motionSettings.tMaxAccel,
+    m_motionSettings.tMaxJerk
+  );
+
+  updateSpeedSettings();
 
   delay(10);
   LOG("Motor Setup Complete\r\n");
+}
+
+void PolarControl::updateSpeedSettings() {
+  double speedFactor = m_speed / 10.0;
+  m_planner.setSpeedMultiplier(speedFactor);
 }
 
 void PolarControl::setupDrivers() {
@@ -69,16 +69,16 @@ void PolarControl::setupDrivers() {
     return;
   }
 
-  commonSetupDriver(m_tDriver);
-  commonSetupDriver(m_rDriver);
-  commonSetupDriver(m_rCDriver);
+  applyDriverSettings(m_tDriver, m_tDriverSettings);
+  applyDriverSettings(m_rDriver, m_rDriverSettings);
+  applyDriverSettings(m_rCDriver, m_rDriverSettings);
 
   m_rDriver.microsteps(R_MICROSTEPS);
-  m_rDriver.rms_current(R_CURRENT);
+  m_rDriver.rms_current(m_rDriverSettings.current);
   m_rCDriver.microsteps(R_MICROSTEPS);
-  m_rCDriver.rms_current(R_CURRENT);
+  m_rCDriver.rms_current(m_rDriverSettings.current);
   m_tDriver.microsteps(T_MICROSTEPS);
-  m_tDriver.rms_current(T_CURRENT);
+  m_tDriver.rms_current(m_tDriverSettings.current);
 
   m_state = INITIALIZED;
 }
@@ -87,34 +87,32 @@ void PolarControl::home() {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
   homeDriver(m_rDriver);
   LOG("R Homing Done\r\n");
-  
-  // Reset positions
-  m_rPos = 0;
-  m_rTargetPos = 0;
-  // Theta is not homed physically, just reset coordinates
-  m_tPos = 0; 
-  m_tTargetPos = 0; 
-  
-  m_currPos = {0.0, 0.0};
-  m_currVelR = 0.0;
-  m_currVelT = 0.0;
+
+  // Planner position will be at 0,0 after init
   m_state = IDLE;
   xSemaphoreGive(m_mutex);
 }
 
-void PolarControl::commonSetupDriver(TMC2209Stepper &driver) {
+void PolarControl::applyDriverSettings(TMC2209Stepper &driver, const DriverSettings &settings) {
   driver.begin();
-  driver.toff(4);
-  driver.blank_time(24);
-  driver.en_spreadCycle(false);
-  driver.pwm_autoscale(true);
-  driver.pwm_autograd(true);
-  driver.pwm_freq(0);
-  driver.pwm_grad(14);
-  driver.pwm_ofs(36);
-  driver.pwm_reg(4);
-  driver.pwm_lim(12);
-  driver.TPWMTHRS(0xFFFFF);
+  driver.toff(settings.toff);
+  driver.blank_time(settings.blankTime);
+  driver.en_spreadCycle(settings.spreadCycle);
+
+  if (settings.spreadCycle) {
+    // SpreadCycle mode settings
+    driver.hysteresis_start(settings.hystStart);
+    driver.hysteresis_end(settings.hystEnd);
+  } else {
+    // StealthChop mode settings
+    driver.pwm_autoscale(true);
+    driver.pwm_autograd(true);
+    driver.pwm_freq(settings.pwmFreq);
+    driver.pwm_reg(settings.pwmReg);
+    driver.pwm_lim(settings.pwmLim);
+    driver.TPWMTHRS(settings.tpwmthrs);
+  }
+
   driver.intpol(true);
   driver.I_scale_analog(false);
   driver.internal_Rsense(false);
@@ -158,11 +156,11 @@ void PolarControl::homeDriver(TMC2209Stepper &driver) {
   homeDriver(driver, 250);
 }
 
-// ============================================================================ 
+// ============================================================================
 // Pattern Control
-// ============================================================================ 
+// ============================================================================
 
-bool PolarControl::start(PosGen *posGen) {
+bool PolarControl::start(std::unique_ptr<PosGen> posGen) {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
 
   if (m_state != IDLE) {
@@ -171,29 +169,47 @@ bool PolarControl::start(PosGen *posGen) {
     return false;
   }
 
-  // Normalize theta to prevent windup
-  double oldTheta = m_currPos.theta;
-  m_currPos.theta = fmod(oldTheta, 2.0 * PI);
-  int32_t stepDiff = round((m_currPos.theta - oldTheta) * STEPS_PER_RADIAN);
-  if (stepDiff != 0) {
-    m_tPos += stepDiff;
-    m_tTargetPos = m_tPos;
-  }
-
   LOG("Starting new PosGen\r\n");
 
-  if (m_posGen != nullptr) {
-    delete m_posGen;
-  }
-  m_posGen = posGen;
+  m_posGen = std::move(posGen);
 
-  m_buffer.clear();
-  m_hasPendingTarget = false;
-  m_currVelR = 0.0;
-  m_currVelT = 0.0;
-  fillBuffer();
+  // Reset planner stats for new pattern
+  m_planner.resetCompletedCount();
+
+  // Feed initial segments to planner
+  feedPlanner();
+
+  // Start the motion planner
+  m_planner.start();
 
   m_state = RUNNING;
+  xSemaphoreGive(m_mutex);
+  return true;
+}
+
+bool PolarControl::startClearing(std::unique_ptr<PosGen> posGen) {
+  xSemaphoreTake(m_mutex, portMAX_DELAY);
+
+  if (m_state != IDLE) {
+    LOG("Not IDLE. Clearing Start Failed\r\n");
+    xSemaphoreGive(m_mutex);
+    return false;
+  }
+
+  LOG("Starting Clearing Pattern\r\n");
+
+  m_posGen = std::move(posGen);
+
+  // Reset planner stats for new pattern
+  m_planner.resetCompletedCount();
+
+  // Feed initial segments to planner
+  feedPlanner();
+
+  // Start the motion planner
+  m_planner.start();
+
+  m_state = CLEARING;
   xSemaphoreGive(m_mutex);
   return true;
 }
@@ -213,31 +229,29 @@ bool PolarControl::loadAndRunFile(String filePath, double maxRho) {
 
   LOG("Loading pattern file: %s\r\n", filePath.c_str());
 
-  // Test if file is valid
-  FilePosGen *testGen = new FilePosGen(filePath, maxRho);
-  PolarCord_t firstPos = testGen->getNextPos();
+  auto newGen = std_patch::make_unique<FilePosGen>(filePath, maxRho);
+  
+  // Quick check if file is valid/openable
+  PolarCord_t firstPos = newGen->getNextPos();
   if (firstPos.isNan()) {
     LOG("ERROR: File is empty or invalid\r\n");
-    delete testGen;
+    m_posGen.reset();
     xSemaphoreGive(m_mutex);
     return false;
   }
-  delete testGen;
+  
+  m_posGen = std::move(newGen);
 
-  // Create the actual generator
-  if (m_posGen != nullptr) {
-    delete m_posGen;
-  }
-  m_posGen = new FilePosGen(filePath, maxRho);
+  // Reset planner stats for new pattern
+  m_planner.resetCompletedCount();
 
-  m_buffer.clear();
-  m_hasPendingTarget = false;
-  m_currVelR = 0.0;
-  m_currVelT = 0.0;
-  fillBuffer();
+  // Feed initial segments to planner
+  feedPlanner();
+
+  // Start the motion planner
+  m_planner.start();
 
   m_state = RUNNING;
-  LOG("File loaded and running\r\n");
   xSemaphoreGive(m_mutex);
   return true;
 }
@@ -245,12 +259,11 @@ bool PolarControl::loadAndRunFile(String filePath, double maxRho) {
 bool PolarControl::pause() {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
   if (m_state == RUNNING) {
-    forceStop();
+    m_planner.stop();
     m_state = PAUSED;
     xSemaphoreGive(m_mutex);
     return true;
   }
-  LOG("Not Running\r\n");
   xSemaphoreGive(m_mutex);
   return false;
 }
@@ -258,13 +271,13 @@ bool PolarControl::pause() {
 bool PolarControl::resume() {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
   if (m_state == PAUSED) {
-    m_currVelR = 0.0;
-    m_currVelT = 0.0;
+    // Feed segments and restart
+    feedPlanner();
+    m_planner.start();
     m_state = RUNNING;
     xSemaphoreGive(m_mutex);
     return true;
   }
-  LOG("Not PAUSED\r\n");
   xSemaphoreGive(m_mutex);
   return false;
 }
@@ -272,424 +285,525 @@ bool PolarControl::resume() {
 bool PolarControl::stop() {
   xSemaphoreTake(m_mutex, portMAX_DELAY);
 
-  if (m_state == PAUSED || m_state == RUNNING) {
-    // Don't force stop - let queued moves finish gracefully
-    // Just stop generating new moves
-    if (m_posGen != nullptr) {
-      delete m_posGen;
-      m_posGen = nullptr;
-    }
-    m_buffer.clear();
-    m_hasPendingTarget = false;
-    m_currVelR = 0.0;
-    m_currVelT = 0.0;
+  if (m_state == PAUSED || m_state == RUNNING || m_state == CLEARING) {
+    m_posGen.reset();
 
-    // Transition to STOPPING state - processNextMove will transition to IDLE
-    // when motors finish their queued moves
-    m_state = STOPPING;
-    LOG("Stopping - waiting for queued moves to complete\r\n");
+    m_planner.stop();
+
+    m_state = IDLE;
+    LOG("Stopped\r\n");
 
     xSemaphoreGive(m_mutex);
     return true;
   }
-  LOG("Not PAUSED Or RUNNING\r\n");
   xSemaphoreGive(m_mutex);
   return false;
 }
 
 void PolarControl::setSpeed(uint8_t speed) {
   m_speed = speed;
+  updateSpeedSettings();
+}
+
+void PolarControl::resetTheta() {
+  m_planner.resetTheta();
 }
 
 PolarControl::State_t PolarControl::getState() {
   return m_state;
 }
 
-PolarCord_t PolarControl::getActualPosition() const {
-  MultiStepperLite* stepper = const_cast<MultiStepperLite*>(&m_stepper);
-  
-  uint32_t rRemaining = stepper->get_remaining_steps(0);
-  uint32_t tRemaining = stepper->get_remaining_steps(1);
-  
-  int32_t rCurrentSteps = m_rTargetPos - (int32_t)rRemaining * m_rDir;
-  int32_t tCurrentSteps = m_tTargetPos - (int32_t)tRemaining * m_tDir;
+PolarCord_t PolarControl::getCurrentPosition() const {
+  double theta, rho;
+  // Note: casting away const for the planner call - it's thread-safe
+  const_cast<MotionPlanner&>(m_planner).getCurrentPosition(theta, rho);
+  return {theta, rho};
+}
 
-  double rho = (double)rCurrentSteps / STEPS_PER_MM;
-  double theta = (double)tCurrentSteps / STEPS_PER_RADIAN;
+PolarCord_t PolarControl::getActualPosition() {
+  double theta, rho;
+  m_planner.getCurrentPosition(theta, rho);
   return {theta, rho};
 }
 
 void PolarControl::forceStop() {
-  m_stepper.pause(0);
-  m_stepper.pause(1);
-  
-  // Update positions to where they stopped
-  PolarCord_t pos = getActualPosition();
-  m_rPos = round(pos.rho * STEPS_PER_MM);
-  m_tPos = round(pos.theta * STEPS_PER_RADIAN);
-  m_rTargetPos = m_rPos;
-  m_tTargetPos = m_tPos;
-  
-  m_currVelR = 0.0;
-  m_currVelT = 0.0;
+  m_planner.stop();
 }
 
-// ============================================================================ 
-// Buffer Management
-// ============================================================================ 
+// ============================================================================
+// Feed segments to planner
+// ============================================================================
 
-void PolarControl::PathBuffer::push(PolarCord_t pos) {
-  if (isFull()) {
-    tail = (tail + 1) % BUFFER_SIZE;
-    count--;
-  }
-  points[head] = pos;
-  head = (head + 1) % BUFFER_SIZE;
-  count++;
-}
+void PolarControl::feedPlanner() {
+  if (!m_posGen) return;
 
-PolarCord_t PolarControl::PathBuffer::peek(int offset) const {
-  if (offset >= count) return {NAN, NAN};
-  return points[(tail + offset) % BUFFER_SIZE];
-}
+  // Keep planner buffer reasonably full
+  while (m_planner.hasSpace()) {
+    PolarCord_t next = m_posGen->getNextPos();
 
-PolarCord_t PolarControl::PathBuffer::pop() {
-  if (isEmpty()) return {NAN, NAN};
-  PolarCord_t result = points[tail];
-  tail = (tail + 1) % BUFFER_SIZE;
-  count--;
-  return result;
-}
-
-void PolarControl::PathBuffer::clear() {
-  head = tail = count = 0;
-}
-
-void PolarControl::fillBuffer() {
-  if (m_posGen == nullptr) return;
-
-  while (!m_buffer.isFull()) {
-    
-    // 1. Get the target point if we don't have one
-    if (!m_hasPendingTarget) {
-      PolarCord_t nextFilePos = m_posGen->getNextPos();
-      if (nextFilePos.isNan()) break; // End of pattern
-      m_pendingTarget = nextFilePos;
-      m_hasPendingTarget = true;
+    if (next.isNan()) {
+      // End of pattern
+      break;
     }
 
-    // 2. Determine where we are starting this segment from
-    // (Either current actual position OR the last queued point)
-    PolarCord_t lastPoint = (m_buffer.count > 0) ? m_buffer.peek(m_buffer.count - 1) : m_currPos;
-
-    // 3. Normalize Theta distance
-    double thetaDiff = normalizeThetaDiff(m_pendingTarget.theta - lastPoint.theta);
-    double rDiff = m_pendingTarget.rho - lastPoint.rho;
-
-    // 4. Check lengths
-    // R is simple (mm). T needs conversion to arc length at max radius? 
-    // Or just treat 1 radian ~ 100mm? 
-    // R_MAX = 450mm. 1 rad at R_MAX = 450mm. 
-    // We want safe motor speeds. T_MAX_VELOCITY is 0.3 rad/s.
-    // Let's limit T segments to something small like 0.05 rad (~2.8 deg).
-    
-    double distR = abs(rDiff);
-    double distT = abs(thetaDiff);
-    
-    // Define max steps per segment (to avoid motor stall on start)
-    // 2.0mm at 50 steps/mm = 100 steps. Safe to jump to?
-    // 0.05 rad at ~2000 steps/rad = 100 steps.
-    double maxSegR = MAX_SEGMENT_LEN; 
-    double maxSegT = 0.05; 
-
-    if (distR <= maxSegR && distT <= maxSegT) {
-      // Small enough - push the actual target
-      
-      // Filter near-duplicates only if it's the FINAL point
-      // (Otherwise interpolation logic handles small steps)
-      if (distR > 0.01 || distT > 0.001) {
-          // Normalize pending target theta relative to last point to ensure continuity
-          m_pendingTarget.theta = lastPoint.theta + thetaDiff;
-          m_buffer.push(m_pendingTarget);
-      }
-      
-      m_hasPendingTarget = false; // Done with this file point
-    } else {
-      // Too big - interpolate
-      // Calculate how many segments we need
-      double stepsR = distR / maxSegR;
-      double stepsT = distT / maxSegT;
-      double segments = std::max(stepsR, stepsT);
-      
-      // Calculate fraction for ONE segment
-      // We want to move exactly maxSeg in the dominant axis
-      double fraction = 1.0 / segments;
-      
-      PolarCord_t interpPoint;
-      interpPoint.rho = lastPoint.rho + (rDiff * fraction);
-      interpPoint.theta = lastPoint.theta + (thetaDiff * fraction);
-      
-      m_buffer.push(interpPoint);
-      // m_hasPendingTarget remains true, we continue from this new point next loop
-    }
+    // Add segment to planner (planner handles theta normalization internally)
+    m_planner.addSegment(next.theta, next.rho);
   }
 }
 
-// ============================================================================ 
+// ============================================================================
 // Main Processing Loop
-// ============================================================================ 
+// ============================================================================
 
 bool PolarControl::processNextMove() {
-  // Must call this frequently! It handles the actual pulse generation.
-  // We call it outside the mutex so it never blocks.
-  m_stepper.do_tasks();
+  // Let planner process (handles timer internally)
+  m_planner.process();
 
   xSemaphoreTake(m_mutex, portMAX_DELAY);
 
-  // Handle STOPPING state - wait for motors to finish queued moves
-  if (m_state == STOPPING) {
-    bool rRunning = m_stepper.is_running(0);
-    bool tRunning = m_stepper.is_running(1);
+  if (m_state == RUNNING || m_state == CLEARING) {
+    // Feed more segments to the planner
+    feedPlanner();
 
-    if (!rRunning && !tRunning) {
-      // Motors finished - update position and transition to IDLE
-      PolarCord_t actualPos = getActualPosition();
-      m_currPos = actualPos;
-
-      // Normalize theta
-      double oldTheta = m_currPos.theta;
-      m_currPos.theta = fmod(oldTheta, 2.0 * PI);
-      int32_t stepDiff = round((m_currPos.theta - oldTheta) * STEPS_PER_RADIAN);
-      if (stepDiff != 0) {
-        m_tPos += stepDiff;
-        m_tTargetPos = m_tPos;
-      }
-
+    // Check if pattern is complete
+    if (m_planner.isIdle()) {
+      m_posGen.reset();
       m_state = IDLE;
-      LOG("Stop complete - now IDLE\r\n");
+      LOG("Pattern Complete\r\n");
+      xSemaphoreGive(m_mutex);
+      return false;
     }
 
     xSemaphoreGive(m_mutex);
-    return false;
+    return m_planner.isRunning();
   }
 
-  if (m_state != RUNNING) {
-    xSemaphoreGive(m_mutex);
-    return false;
-  }
-
-  // Wait for motors to finish current moves before planning new ones
-  // This ensures timing is honored - we don't queue faster than execution
-  bool rRunning = m_stepper.is_running(0);
-  bool tRunning = m_stepper.is_running(1);
-  if (rRunning || tRunning) {
-    xSemaphoreGive(m_mutex);
-    return true;  // Still working, check again later
-  }
-
-  fillBuffer();
-
-  if (m_buffer.isEmpty()) {
-    if (m_posGen != nullptr) {
-      delete m_posGen;
-      m_posGen = nullptr;
-    }
-    m_state = IDLE;
-    LOG("Pattern complete\r\n");
-    xSemaphoreGive(m_mutex);
-    return false;
-  }
-
-  bool result = planNextMove();
   xSemaphoreGive(m_mutex);
-  return result;
-}
-
-// ============================================================================ 
-// Motion Planning
-// ============================================================================ 
-
-double PolarControl::calcLookAheadEndVel(int axis) {
-  // Look at upcoming moves to determine target end velocity
-  // Gradually decelerate as we approach a direction change for smooth motion
-
-  if (m_buffer.count < 2) return 0.0;
-
-  PolarCord_t curr = m_buffer.peek(0);
-  double currDist = (axis == 0) ? (curr.rho - m_currPos.rho)
-                                : normalizeThetaDiff(curr.theta - m_currPos.theta);
-
-  if (abs(currDist) < 0.001) return 0.0;
-
-  int currDir = currDist > 0 ? 1 : -1;
-  double maxVel = (axis == 0) ? R_MAX_VELOCITY : T_MAX_VELOCITY;
-
-  // Calculate cumulative distance until direction change
-  double distToChange = abs(currDist);
-  int dirChangeAt = -1;  // Index where direction changes (-1 = no change found)
-
-  int lookAhead = std::min(8, m_buffer.count - 1);  // Look further ahead
-  for (int i = 0; i < lookAhead; i++) {
-    PolarCord_t from = m_buffer.peek(i);
-    PolarCord_t to = m_buffer.peek(i + 1);
-
-    double nextDist = (axis == 0) ? (to.rho - from.rho)
-                                  : normalizeThetaDiff(to.theta - from.theta);
-
-    if (abs(nextDist) < 0.001) continue;  // Skip tiny moves
-
-    int nextDir = nextDist > 0 ? 1 : -1;
-    if (nextDir != currDir) {
-      dirChangeAt = i;
-      break;
-    }
-    distToChange += abs(nextDist);
-  }
-
-  if (dirChangeAt < 0) {
-    // No direction change in sight - maintain good velocity
-    return maxVel * 0.8;
-  }
-
-  // Direction change coming - calculate smooth deceleration
-  // Use kinematic equation: v² = 2*a*d  =>  v = sqrt(2*a*d)
-  // This gives the velocity we can have now to decelerate to 0 over distance d
-  double accel = (axis == 0) ? R_MAX_ACCEL : T_MAX_ACCEL;
-  double safeVel = sqrt(2.0 * accel * distToChange);
-
-  // Clamp to max velocity and apply smoothing factor
-  safeVel = std::min(safeVel, maxVel * 0.8);
-
-  // If very close to direction change, ensure we're slowing down significantly
-  if (dirChangeAt == 0) {
-    safeVel = std::min(safeVel, maxVel * 0.2);
-  } else if (dirChangeAt == 1) {
-    safeVel = std::min(safeVel, maxVel * 0.4);
-  }
-
-  return safeVel;
-}
-
-bool PolarControl::planNextMove() {
-  PolarCord_t target = m_buffer.peek(0);
-  if (target.isNan()) return false;
-
-  // Normalize theta for shortest path
-  target.theta = m_currPos.theta + normalizeThetaDiff(target.theta - m_currPos.theta);
-
-  double rDist = target.rho - m_currPos.rho;
-  double tDist = target.theta - m_currPos.theta;
-
-  // Skip if we're already there
-  if (abs(rDist) < 0.01 && abs(tDist) < 0.001) {
-    m_buffer.pop();
-    return true;
-  }
-
-  // Simple velocity model: use motor speed limits directly
-  // Speed slider (1-10) scales the max velocities: speed 10 = full speed
-  double speedFactor = m_speed / 10.0;
-  double maxVelR = R_MAX_VELOCITY * speedFactor;
-  double maxVelT = T_MAX_VELOCITY * speedFactor;
-
-  // Calculate time needed for each axis at their max velocities
-  double timeR = (abs(rDist) > 0.01) ? abs(rDist) / maxVelR : 0;
-  double timeT = (abs(tDist) > 0.001) ? abs(tDist) / maxVelT : 0;
-
-  // Use the longer time (slower axis dominates) to keep axes synchronized
-  double moveTime = std::max(timeR, timeT);
-  moveTime = std::max(moveTime, 0.025);  // Minimum 25ms per move
-
-  // Calculate actual velocities used (may be slower than max for the faster axis)
-  double actualVelR = (abs(rDist) > 0.01) ? abs(rDist) / moveTime : 0;
-  double actualVelT = (abs(tDist) > 0.001) ? abs(tDist) / moveTime : 0;
-
-  // Debug: log velocity calculations and positions with timestamp
-  PolarCord_t actualPos = getActualPosition();
-  LOG("[%lu] plan: rD=%.1f tD=%.2f t=%.2fs | queued(r=%.1f t=%.2f) actual(r=%.1f t=%.2f)\r\n",
-      millis(), rDist, tDist, moveTime, m_currPos.rho, m_currPos.theta, actualPos.rho, actualPos.theta);
-
-  // Determine end velocities using look-ahead
-  double endVelR = calcLookAheadEndVel(0);
-  double endVelT = calcLookAheadEndVel(1);
-
-  // Cap end velocities to current move's velocities
-  endVelR = std::min(endVelR, actualVelR);
-  endVelT = std::min(endVelT, actualVelT);
-
-  // Execute the move
-  if (executeMove(rDist, tDist, m_currVelR, m_currVelT, endVelR, endVelT, actualVelR, actualVelT)) {
-    m_currPos = target;
-    m_currVelR = (rDist >= 0 ? 1 : -1) * endVelR;
-    m_currVelT = (tDist >= 0 ? 1 : -1) * endVelT;
-    m_buffer.pop();
-    return true;
-  }
-
   return false;
 }
 
-// ============================================================================ 
-// Move Execution
-// ============================================================================ 
+// ============================================================================
+// Tuning Settings
+// ============================================================================
 
-bool PolarControl::executeMove(double rDist, double tDist,
-                                double startVelR, double startVelT,
-                                double endVelR, double endVelT,
-                                double maxVelR, double maxVelT) {
-  // Convert to steps
-  int32_t totalRSteps = round(rDist * STEPS_PER_MM);
-  int32_t totalTSteps = round(tDist * STEPS_PER_RADIAN);
+void PolarControl::setMotionSettings(const MotionSettings& settings) {
+  m_motionSettings = settings;
 
-  if (totalRSteps == 0 && totalTSteps == 0) {
-    return true;
+  // Update the motion planner with new limits
+  m_planner.init(
+    STEPS_PER_MM,
+    STEPS_PER_RADIAN,
+    R_MAX,
+    m_motionSettings.rMaxVelocity,
+    m_motionSettings.rMaxAccel,
+    m_motionSettings.rMaxJerk,
+    m_motionSettings.tMaxVelocity,
+    m_motionSettings.tMaxAccel,
+    m_motionSettings.tMaxJerk
+  );
+
+  LOG("Motion settings updated\r\n");
+}
+
+void PolarControl::setThetaDriverSettings(const DriverSettings& settings) {
+  m_tDriverSettings = settings;
+  applyDriverSettings(m_tDriver, m_tDriverSettings);
+  m_tDriver.microsteps(T_MICROSTEPS);
+  m_tDriver.rms_current(m_tDriverSettings.current);
+  LOG("Theta driver settings updated\r\n");
+}
+
+void PolarControl::setRhoDriverSettings(const DriverSettings& settings) {
+  m_rDriverSettings = settings;
+  applyDriverSettings(m_rDriver, m_rDriverSettings);
+  applyDriverSettings(m_rCDriver, m_rDriverSettings);
+  m_rDriver.microsteps(R_MICROSTEPS);
+  m_rDriver.rms_current(m_rDriverSettings.current);
+  m_rCDriver.microsteps(R_MICROSTEPS);
+  m_rCDriver.rms_current(m_rDriverSettings.current);
+  LOG("Rho driver settings updated\r\n");
+}
+
+// ============================================================================
+// Settings Persistence
+// ============================================================================
+
+static const char* TUNING_FILE = "/tuning.json";
+
+bool PolarControl::saveTuningSettings() {
+  JsonDocument doc;
+
+  // Motion settings
+  JsonObject motion = doc["motion"].to<JsonObject>();
+  motion["rMaxVelocity"] = m_motionSettings.rMaxVelocity;
+  motion["rMaxAccel"] = m_motionSettings.rMaxAccel;
+  motion["rMaxJerk"] = m_motionSettings.rMaxJerk;
+  motion["tMaxVelocity"] = m_motionSettings.tMaxVelocity;
+  motion["tMaxAccel"] = m_motionSettings.tMaxAccel;
+  motion["tMaxJerk"] = m_motionSettings.tMaxJerk;
+
+  // Theta driver settings
+  JsonObject theta = doc["thetaDriver"].to<JsonObject>();
+  theta["current"] = m_tDriverSettings.current;
+  theta["toff"] = m_tDriverSettings.toff;
+  theta["blankTime"] = m_tDriverSettings.blankTime;
+  theta["spreadCycle"] = m_tDriverSettings.spreadCycle;
+  theta["pwmFreq"] = m_tDriverSettings.pwmFreq;
+  theta["pwmReg"] = m_tDriverSettings.pwmReg;
+  theta["pwmLim"] = m_tDriverSettings.pwmLim;
+  theta["tpwmthrs"] = m_tDriverSettings.tpwmthrs;
+  theta["hystStart"] = m_tDriverSettings.hystStart;
+  theta["hystEnd"] = m_tDriverSettings.hystEnd;
+
+  // Rho driver settings
+  JsonObject rho = doc["rhoDriver"].to<JsonObject>();
+  rho["current"] = m_rDriverSettings.current;
+  rho["toff"] = m_rDriverSettings.toff;
+  rho["blankTime"] = m_rDriverSettings.blankTime;
+  rho["spreadCycle"] = m_rDriverSettings.spreadCycle;
+  rho["pwmFreq"] = m_rDriverSettings.pwmFreq;
+  rho["pwmReg"] = m_rDriverSettings.pwmReg;
+  rho["pwmLim"] = m_rDriverSettings.pwmLim;
+  rho["tpwmthrs"] = m_rDriverSettings.tpwmthrs;
+  rho["hystStart"] = m_rDriverSettings.hystStart;
+  rho["hystEnd"] = m_rDriverSettings.hystEnd;
+
+  // Write to file
+  File file = SD.open(TUNING_FILE, FILE_WRITE);
+  if (!file) {
+    LOG("Failed to open tuning file for writing\r\n");
+    return false;
   }
 
-  // Calculate total move time - slower axis dominates
-  double rTime = (abs(rDist) > 0.01) ? abs(rDist) / maxVelR : 0;
-  double tTime = (abs(tDist) > 0.001) ? abs(tDist) / maxVelT : 0;
-  double moveTime = std::max(rTime, tTime);
-  if (moveTime < 0.010) moveTime = 0.010;  // Minimum 10ms per move
-
-  // Calculate the actual speed needed for each axis to finish in moveTime
-  // Speed in Hz = steps / seconds
-  uint32_t rSpeedHz = (totalRSteps != 0) ? (uint32_t)(abs(totalRSteps) / moveTime) : 1;
-  uint32_t tSpeedHz = (totalTSteps != 0) ? (uint32_t)(abs(totalTSteps) / moveTime) : 1;
-
-  // Ensure minimum speed (1 Hz) to avoid divide by zero
-  rSpeedHz = std::max(rSpeedHz, (uint32_t)1);
-  tSpeedHz = std::max(tSpeedHz, (uint32_t)1);
-
-  // Debug: log the move parameters
-  LOG("exec: rS=%d tS=%d t=%.2fs rHz=%lu tHz=%lu\r\n",
-      totalRSteps, totalTSteps, moveTime, rSpeedHz, tSpeedHz);
-
-  // Determine direction and set pins
-  m_rDir = (totalRSteps >= 0) ? 1 : -1;
-  m_tDir = (totalTSteps >= 0) ? 1 : -1;
-  digitalWrite(R_DIR_PIN, (m_rDir == 1) ? HIGH : LOW);
-  digitalWrite(T_DIR_PIN, (m_tDir == 1) ? HIGH : LOW);
-
-  // Calculate interval in microseconds
-  uint32_t rInterval = 1000000 / rSpeedHz;
-  uint32_t tInterval = 1000000 / tSpeedHz;
-
-  // Update target positions (committed position)
-  // We commit the move now. getActualPosition will interpolate based on remaining steps.
-  // Wait! Current m_rPos/m_tPos are where we are NOW (start of this move).
-  // We need to advance them AFTER the move? 
-  // No, the logic in getActualPosition uses m_rTargetPos.
-  // m_rTargetPos should be the END of the move we are about to start.
-  m_rTargetPos += totalRSteps; // Advance target
-  m_tTargetPos += totalTSteps;
-
-  // Start motors
-  if (totalRSteps != 0) {
-    m_stepper.start_finite(0, rInterval, abs(totalRSteps));
-  }
-  if (totalTSteps != 0) {
-    m_stepper.start_finite(1, tInterval, abs(totalTSteps));
-  }
-
+  serializeJsonPretty(doc, file);
+  file.close();
+  LOG("Tuning settings saved to %s\r\n", TUNING_FILE);
   return true;
+}
+
+bool PolarControl::loadTuningSettings() {
+  if (!SD.exists(TUNING_FILE)) {
+    LOG("No tuning file found, using defaults\r\n");
+    return false;
+  }
+
+  File file = SD.open(TUNING_FILE, FILE_READ);
+  if (!file) {
+    LOG("Failed to open tuning file for reading\r\n");
+    return false;
+  }
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+
+  if (error) {
+    LOG("Failed to parse tuning file: %s\r\n", error.c_str());
+    return false;
+  }
+
+  // Motion settings
+  if (doc["motion"].is<JsonObject>()) {
+    JsonObject motion = doc["motion"];
+    m_motionSettings.rMaxVelocity = motion["rMaxVelocity"] | m_motionSettings.rMaxVelocity;
+    m_motionSettings.rMaxAccel = motion["rMaxAccel"] | m_motionSettings.rMaxAccel;
+    m_motionSettings.rMaxJerk = motion["rMaxJerk"] | m_motionSettings.rMaxJerk;
+    m_motionSettings.tMaxVelocity = motion["tMaxVelocity"] | m_motionSettings.tMaxVelocity;
+    m_motionSettings.tMaxAccel = motion["tMaxAccel"] | m_motionSettings.tMaxAccel;
+    m_motionSettings.tMaxJerk = motion["tMaxJerk"] | m_motionSettings.tMaxJerk;
+  }
+
+  // Theta driver settings
+  if (doc["thetaDriver"].is<JsonObject>()) {
+    JsonObject theta = doc["thetaDriver"];
+    m_tDriverSettings.current = theta["current"] | m_tDriverSettings.current;
+    m_tDriverSettings.toff = theta["toff"] | m_tDriverSettings.toff;
+    m_tDriverSettings.blankTime = theta["blankTime"] | m_tDriverSettings.blankTime;
+    m_tDriverSettings.spreadCycle = theta["spreadCycle"] | m_tDriverSettings.spreadCycle;
+    m_tDriverSettings.pwmFreq = theta["pwmFreq"] | m_tDriverSettings.pwmFreq;
+    m_tDriverSettings.pwmReg = theta["pwmReg"] | m_tDriverSettings.pwmReg;
+    m_tDriverSettings.pwmLim = theta["pwmLim"] | m_tDriverSettings.pwmLim;
+    m_tDriverSettings.tpwmthrs = theta["tpwmthrs"] | m_tDriverSettings.tpwmthrs;
+    m_tDriverSettings.hystStart = theta["hystStart"] | m_tDriverSettings.hystStart;
+    m_tDriverSettings.hystEnd = theta["hystEnd"] | m_tDriverSettings.hystEnd;
+  }
+
+  // Rho driver settings
+  if (doc["rhoDriver"].is<JsonObject>()) {
+    JsonObject rho = doc["rhoDriver"];
+    m_rDriverSettings.current = rho["current"] | m_rDriverSettings.current;
+    m_rDriverSettings.toff = rho["toff"] | m_rDriverSettings.toff;
+    m_rDriverSettings.blankTime = rho["blankTime"] | m_rDriverSettings.blankTime;
+    m_rDriverSettings.spreadCycle = rho["spreadCycle"] | m_rDriverSettings.spreadCycle;
+    m_rDriverSettings.pwmFreq = rho["pwmFreq"] | m_rDriverSettings.pwmFreq;
+    m_rDriverSettings.pwmReg = rho["pwmReg"] | m_rDriverSettings.pwmReg;
+    m_rDriverSettings.pwmLim = rho["pwmLim"] | m_rDriverSettings.pwmLim;
+    m_rDriverSettings.tpwmthrs = rho["tpwmthrs"] | m_rDriverSettings.tpwmthrs;
+    m_rDriverSettings.hystStart = rho["hystStart"] | m_rDriverSettings.hystStart;
+    m_rDriverSettings.hystEnd = rho["hystEnd"] | m_rDriverSettings.hystEnd;
+  }
+
+  LOG("Tuning settings loaded from %s\r\n", TUNING_FILE);
+  return true;
+}
+
+// ============================================================================
+// Motor Stress Tests (using Motion Planner)
+// ============================================================================
+
+// Test pattern generator for theta motor
+class TestThetaPosGen : public PosGen {
+public:
+  TestThetaPosGen(double fixedRho) : m_rho(fixedRho), m_phase(0), m_step(0) {}
+
+  PolarCord_t getNextPos() override {
+    // Phase 0: Rotate 5 full turns forward
+    // Phase 1: Rotate 5 full turns back
+    // Phase 2: Varying size moves (0.5° to 90°)
+    // Phase 3: Random quick reversals
+
+    const double STEP_SIZE = PI;  // radians per point
+    const double FULL_ROTATION = 2.0 * PI;
+    const int ROTATIONS = 5;
+    const double DEGREES_TO_RADIANS = PI / 180.0;
+
+    // Varying move sizes in degrees
+    static const double MOVE_SIZES[] = {
+      0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0, 90.0,
+      90.0, 60.0, 45.0, 30.0, 20.0, 15.0, 10.0, 5.0, 2.0, 1.0, 0.5
+    };
+    static const int NUM_MOVE_SIZES = sizeof(MOVE_SIZES) / sizeof(MOVE_SIZES[0]);
+
+    if (m_phase == 0) {
+      // Forward rotation
+      double theta = m_step * STEP_SIZE;
+      if (theta >= FULL_ROTATION * ROTATIONS) {
+        m_phase = 1;
+        m_step = 0;
+        m_baseTheta = FULL_ROTATION * ROTATIONS;
+      } else {
+        m_step++;
+        return {theta, m_rho};
+      }
+    }
+
+    if (m_phase == 1) {
+      // Reverse rotation back to start
+      double theta = m_baseTheta - m_step * STEP_SIZE;
+      if (theta <= 0) {
+        m_phase = 2;
+        m_step = 0;
+        m_currentTheta = 0;
+      } else {
+        m_step++;
+        return {theta, m_rho};
+      }
+    }
+
+    if (m_phase == 2) {
+      // Varying size moves - go out and back for each size
+      if (m_step >= NUM_MOVE_SIZES * 2) {
+        m_phase = 3;
+        m_step = 0;
+        m_currentTheta = 0;
+      } else {
+        int sizeIdx = m_step / 2;
+        bool goingOut = (m_step % 2 == 0);
+        double moveSize = MOVE_SIZES[sizeIdx] * DEGREES_TO_RADIANS;
+
+        if (goingOut) {
+          m_currentTheta = moveSize;
+        } else {
+          m_currentTheta = 0;
+        }
+        m_step++;
+        return {m_currentTheta, m_rho};
+      }
+    }
+
+    if (m_phase == 3) {
+      // Quick random-ish reversals at different amplitudes
+      static const double QUICK_SIZES[] = {5.0, 45.0, 2.0, 90.0, 10.0, 30.0, 1.0, 60.0, 15.0, 0.5};
+      static const int NUM_QUICK = sizeof(QUICK_SIZES) / sizeof(QUICK_SIZES[0]);
+
+      if (m_step >= NUM_QUICK * 2) {
+        return {std::nan(""), std::nan("")};  // Done
+      }
+
+      int sizeIdx = m_step / 2;
+      bool goingOut = (m_step % 2 == 0);
+      double moveSize = QUICK_SIZES[sizeIdx] * DEGREES_TO_RADIANS;
+
+      if (goingOut) {
+        m_currentTheta = moveSize;
+      } else {
+        m_currentTheta = 0;
+      }
+      m_step++;
+      return {m_currentTheta, m_rho};
+    }
+
+    return {std::nan(""), std::nan("")};
+  }
+
+private:
+  double m_rho;
+  double m_baseTheta = 0;
+  double m_currentTheta = 0;
+  int m_phase;
+  int m_step;
+};
+
+// Test pattern generator for rho motor
+class TestRhoPosGen : public PosGen {
+public:
+  TestRhoPosGen(double maxRho) : m_maxRho(maxRho), m_phase(0), m_step(0) {}
+
+  PolarCord_t getNextPos() override {
+    // Phase 0: Move from center to max
+    // Phase 1: Move from max to near-zero
+    // Phase 2: Move back to center
+    // Phase 3: Varying size moves (1mm to 100mm)
+    // Phase 4: Quick random-ish reversals
+
+    const double STEP_SIZE = 5.0;  // mm per point
+    const double CENTER = m_maxRho / 2;
+    const double MIN_RHO = 20.0;
+
+    // Varying move sizes in mm
+    static const double MOVE_SIZES[] = {
+      1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 50.0, 75.0, 100.0,
+      100.0, 75.0, 50.0, 30.0, 20.0, 10.0, 5.0, 2.0, 1.0
+    };
+    static const int NUM_MOVE_SIZES = sizeof(MOVE_SIZES) / sizeof(MOVE_SIZES[0]);
+
+    if (m_phase == 0) {
+      // Move outward from center to max
+      double rho = CENTER + m_step * STEP_SIZE;
+      if (rho >= m_maxRho) {
+        m_phase = 1;
+        m_step = 0;
+      } else {
+        m_step++;
+        return {0, rho};
+      }
+    }
+
+    if (m_phase == 1) {
+      // Move inward from max to min
+      double rho = m_maxRho - m_step * STEP_SIZE;
+      if (rho <= MIN_RHO) {
+        m_phase = 2;
+        m_step = 0;
+      } else {
+        m_step++;
+        return {0, rho};
+      }
+    }
+
+    if (m_phase == 2) {
+      // Move back to center
+      double rho = MIN_RHO + m_step * STEP_SIZE;
+      if (rho >= CENTER) {
+        m_phase = 3;
+        m_step = 0;
+        m_currentRho = CENTER;
+      } else {
+        m_step++;
+        return {0, rho};
+      }
+    }
+
+    if (m_phase == 3) {
+      // Varying size moves - go out and back for each size
+      if (m_step >= NUM_MOVE_SIZES * 2) {
+        m_phase = 4;
+        m_step = 0;
+        m_currentRho = CENTER;
+      } else {
+        int sizeIdx = m_step / 2;
+        bool goingOut = (m_step % 2 == 0);
+        double moveSize = MOVE_SIZES[sizeIdx];
+
+        if (goingOut) {
+          m_currentRho = CENTER + moveSize;
+        } else {
+          m_currentRho = CENTER;
+        }
+        m_step++;
+        return {0, m_currentRho};
+      }
+    }
+
+    if (m_phase == 4) {
+      // Quick random-ish reversals at different amplitudes
+      static const double QUICK_SIZES[] = {10.0, 50.0, 5.0, 100.0, 20.0, 75.0, 2.0, 30.0, 1.0, 60.0};
+      static const int NUM_QUICK = sizeof(QUICK_SIZES) / sizeof(QUICK_SIZES[0]);
+
+      if (m_step >= NUM_QUICK * 2) {
+        return {std::nan(""), std::nan("")};  // Done
+      }
+
+      int sizeIdx = m_step / 2;
+      bool goingOut = (m_step % 2 == 0);
+      double moveSize = QUICK_SIZES[sizeIdx];
+
+      if (goingOut) {
+        m_currentRho = CENTER + moveSize;
+      } else {
+        m_currentRho = CENTER;
+      }
+      m_step++;
+      return {0, m_currentRho};
+    }
+
+    return {std::nan(""), std::nan("")};
+  }
+
+private:
+  double m_maxRho;
+  double m_currentRho = 0;
+  int m_phase;
+  int m_step;
+};
+
+void PolarControl::testThetaMotor() {
+  if (m_state != IDLE) {
+    LOG("Cannot test: not IDLE\r\n");
+    return;
+  }
+
+  LOG("Starting theta motor test via motion planner...\r\n");
+
+  // Get current rho position to hold it constant
+  double currentTheta, currentRho;
+  m_planner.getCurrentPosition(currentTheta, currentRho);
+
+  // Use a safe rho position (middle of range)
+  double testRho = (currentRho > 50 && currentRho < R_MAX - 50) ? currentRho : R_MAX / 2;
+
+  // Reset theta to 0 for clean test
+  resetTheta();
+
+  // Create and start the test pattern
+  start(std_patch::make_unique<TestThetaPosGen>(testRho));
+
+  LOG("Theta test pattern started\r\n");
+}
+
+void PolarControl::testRhoMotor() {
+  if (m_state != IDLE) {
+    LOG("Cannot test: not IDLE\r\n");
+    return;
+  }
+
+  LOG("Starting rho motor test via motion planner...\r\n");
+
+  // Reset theta to 0 for clean test
+  resetTheta();
+
+  // Create and start the test pattern
+  start(std_patch::make_unique<TestRhoPosGen>(R_MAX));
+
+  LOG("Rho test pattern started\r\n");
 }

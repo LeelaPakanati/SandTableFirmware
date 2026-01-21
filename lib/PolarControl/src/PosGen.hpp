@@ -2,43 +2,7 @@
 #include <Arduino.h>
 #include <SDCard.hpp>
 #include <cmath>
-
-struct PolarCord_t {
-  double theta;
-  double rho;
-
-  String getStr() const {
-    return "T:" + String(theta) + "|R:" + String(rho);
-  }
-
-  bool isNan() {
-    return (std::isnan(theta) && std::isnan(rho));
-  }
-
-  PolarCord_t operator - (PolarCord_t other) {
-    return {theta - other.theta, rho - other.rho};
-  }
-
-  bool operator == (PolarCord_t other) {
-    return (theta == other.theta) && (rho == other.rho);
-  }
-
-  PolarCord_t operator * (double mult) {
-    return {theta * mult, rho * mult};
-  }
-
-  PolarCord_t operator + (PolarCord_t other) {
-    return {theta + other.theta, rho + other.rho};
-  }
-
-  PolarCord_t operator / (double div) {
-    return {theta / div, rho / div};
-  }
-
-  PolarCord_t operator / (int div) {
-    return {theta / (double)div, rho / (double)div};
-  }
-};
+#include "PolarUtils.hpp"
 
 class PosGen {
   public:
