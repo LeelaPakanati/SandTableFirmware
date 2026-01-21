@@ -6,6 +6,7 @@
 #include "JsonHelpers.hpp"
 #include "PolarUtils.hpp"
 #include "MakeUnique.hpp"
+#include <SDCard.hpp>
 #include <ClearingPatternGen.hpp>
 
 // Helper to resolve pattern file path
@@ -679,12 +680,11 @@ void SisyphusWebServer::handleFileDelete(AsyncWebServerRequest *request) {
     String pngPath = dirPath + "/" + basename + ".png";
     bool deleted = false;
 
-    if (SD.exists(thrPath)) {
-        SD.remove(thrPath);
-        if (SD.exists(pngPath)) SD.remove(pngPath);
-        SD.rmdir(dirPath);
-        deleted = true;
+    if (SD.exists(dirPath) && SD.open(dirPath).isDirectory()) {
+        // Delete entire pattern directory recursively
+        deleted = removeDirectoryRecursive(dirPath.c_str());
     } else {
+        // Fallback: try flat file structure
         String flatPath = "/patterns/" + filename;
         if (SD.exists(flatPath)) deleted = SD.remove(flatPath);
     }

@@ -77,3 +77,27 @@ inline void listSDFiles(const char* dirname = "/") {
     
     Serial.printf("Total files: %d\n\n", count);
 }
+
+// Recursively delete a directory and all its contents
+inline bool removeDirectoryRecursive(const char* path) {
+    File dir = SD.open(path);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) dir.close();
+        return false;
+    }
+
+    File entry = dir.openNextFile();
+    while (entry) {
+        String entryPath = String(path) + "/" + entry.name();
+        if (entry.isDirectory()) {
+            entry.close();
+            removeDirectoryRecursive(entryPath.c_str());
+        } else {
+            entry.close();
+            SD.remove(entryPath.c_str());
+        }
+        entry = dir.openNextFile();
+    }
+    dir.close();
+    return SD.rmdir(path);
+}
