@@ -817,8 +817,11 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 <div class="status-item">
                     <div class="status-label">Pattern</div>
                     <div class="status-value" id="current-pattern" style="font-size: 0.9em;">None</div>
-                    <div class="status-progress-bar" id="file-progress-container" style="display: none;">
-                        <div class="status-progress-fill" id="file-progress-bar"></div>
+                    <div id="file-progress-container" style="display: none;">
+                        <div class="status-progress-bar">
+                            <div class="status-progress-fill" id="file-progress-bar"></div>
+                        </div>
+                        <div style="font-size: 0.75em; color: var(--text-secondary); margin-top: 2px;" id="file-progress-text">0%</div>
                     </div>
                 </div>
                 <div class="status-item">
@@ -1400,6 +1403,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 const isRunning = status.state === 'RUNNING' || status.state === 'CLEARING';
                 const statusProgressContainer = document.getElementById('file-progress-container');
                 const statusProgressBar = document.getElementById('file-progress-bar');
+                const statusProgressText = document.getElementById('file-progress-text');
                 const npProgressContainer = document.getElementById('np-file-progress-container');
                 const npProgressBar = document.getElementById('np-file-progress-bar');
                 const npProgressText = document.getElementById('np-file-progress-text');
@@ -1407,6 +1411,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 if (isRunning && progress >= 0) {
                     statusProgressContainer.style.display = 'block';
                     statusProgressBar.style.width = progress + '%';
+                    statusProgressText.textContent = progress + '%';
                     npProgressContainer.style.display = 'block';
                     npProgressBar.style.width = progress + '%';
                     npProgressText.textContent = progress + '%';
