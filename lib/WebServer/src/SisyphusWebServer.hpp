@@ -89,6 +89,7 @@ private:
     void processPatternQueue();
     void broadcastLogs();
     void broadcastPosition(); // New streaming method
+    void broadcastSinglePosition(AsyncEventSourceClient *client = nullptr);
     String buildStatusJSON();
     String buildFileListJSON();
     String buildSystemInfoJSON();

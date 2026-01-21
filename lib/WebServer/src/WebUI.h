@@ -192,10 +192,10 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             max-width: 500px;
             aspect-ratio: 1;
             border-radius: 50%;
-            background: radial-gradient(circle, var(--sand-light) 0%, #d4c4a8 70%, #baa888 100%);
+            background: radial-gradient(circle, #8b7d6b 0%, #4a4238 70%, #2a2520 100%);
             box-shadow:
-                inset 0 0 60px rgba(0, 0, 0, 0.3),
-                0 0 40px rgba(201, 162, 39, 0.2),
+                inset 0 0 60px rgba(0, 0, 0, 0.5),
+                0 0 40px rgba(201, 162, 39, 0.1),
                 0 20px 60px rgba(0, 0, 0, 0.5);
             padding: 8px;
         }
@@ -999,6 +999,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.lastPatternName = '';
                 this.selectedPattern = null;
                 this.files = [];
+                this.fileTimes = {};
                 this.init();
             }
 
@@ -1321,6 +1322,13 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     const response = await fetch(this.apiBase + '/files');
                     const data = await response.json();
                     this.files = data.files || [];
+                    this.fileTimes = {};
+                    this.files.forEach(f => {
+                        this.fileTimes[f.name] = f.time;
+                        // Also store by basename for easy lookup
+                        const basename = f.name.replace('.thr', '');
+                        this.fileTimes[basename] = f.time;
+                    });
                     this.renderPatternList();
                 } catch (error) {
                     console.error('Error loading files:', error);
@@ -1337,7 +1345,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 container.innerHTML = this.files.map(file => {
                     const isSelected = this.selectedPattern === file.name;
                     const displayName = file.name.replace('.thr', '');
-                    const thumbUrl = '/api/pattern/image?file=' + encodeURIComponent(displayName);
+                    const thumbUrl = `/api/pattern/image?file=${encodeURIComponent(displayName)}&t=${file.time || 0}`;
                     
                     return `
                     <div class="pattern-list-item ${isSelected ? 'selected' : ''}" data-name="${file.name}" onclick="controller.selectPattern('${file.name}')">
@@ -1380,7 +1388,8 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     // Update overlay image
                     const img = document.getElementById('pattern-overlay');
                     if (currentPattern !== 'None') {
-                        img.src = '/api/pattern/image?file=' + encodeURIComponent(currentPattern);
+                        const t = this.fileTimes[currentPattern] || 0;
+                        img.src = `/api/pattern/image?file=${encodeURIComponent(currentPattern)}&t=${t}`;
                         img.style.display = 'block';
                     } else {
                         img.style.display = 'none';

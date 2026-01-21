@@ -152,7 +152,7 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
         
         if (SD.exists(pngPath)) {
             AsyncWebServerResponse *response = request->beginResponse(SD, pngPath, "image/png");
-            response->addHeader("Cache-Control", "public, max-age=3600"); // Cache for 1 hour
+            response->addHeader("Cache-Control", "public, max-age=31536000"); // Cache for 1 year (cache-busting handled by frontend)
             request->send(response);
         } else {
             request->send(404);
@@ -287,8 +287,9 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
     });
 
     // SSE for console logs
-    m_events.onConnect([](AsyncEventSourceClient *client) {
+    m_events.onConnect([this](AsyncEventSourceClient *client) {
         client->send("Connected to console", NULL, millis(), 1000);
+        this->broadcastSinglePosition(client); // Send initial position
     });
     m_server.addHandler(&m_events);
 
@@ -300,6 +301,26 @@ void SisyphusWebServer::loop() {
     processPatternQueue();
     broadcastLogs();
     broadcastPosition();
+}
+
+void SisyphusWebServer::broadcastSinglePosition(AsyncEventSourceClient *client) {
+    // Get actual position (thread-safe now)
+    PolarCord_t actualPos = m_polarControl->getActualPosition();
+    double maxRho = m_polarControl->getMaxRho();
+
+    // Convert to normalized Cartesian coordinates (0-1 range)
+    CartesianCord_t norm = PolarUtils::toNormalizedCartesian(actualPos, maxRho);
+
+    // Create compact JSON manually to save heap
+    char buffer[128];
+    snprintf(buffer, sizeof(buffer), "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f}", 
+             norm.x, norm.y, actualPos.rho, actualPos.theta);
+
+    if (client) {
+        client->send(buffer, "pos", millis());
+    } else {
+        m_events.send(buffer, "pos", millis());
+    }
 }
 
 void SisyphusWebServer::broadcastPosition() {
@@ -319,11 +340,9 @@ void SisyphusWebServer::broadcastPosition() {
 
     if (m_events.count() == 0) return;
 
-    // Get actual position (thread-safe now)
+    // Get actual position
     PolarCord_t actualPos = m_polarControl->getActualPosition();
     double maxRho = m_polarControl->getMaxRho();
-
-    // Convert to normalized Cartesian coordinates (0-1 range)
     CartesianCord_t norm = PolarUtils::toNormalizedCartesian(actualPos, maxRho);
 
     // Only broadcast if changed significantly to reduce network load
@@ -341,17 +360,14 @@ void SisyphusWebServer::broadcastPosition() {
         m_firstPointCleared = true;
     }
 
-    // Create compact JSON manually to save heap
-    char buffer[128];
     if (shouldClear) {
+        char buffer[128];
         snprintf(buffer, sizeof(buffer), "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f,\"clear\":1}", 
                  norm.x, norm.y, actualPos.rho, actualPos.theta);
+        m_events.send(buffer, "pos", millis());
     } else {
-        snprintf(buffer, sizeof(buffer), "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f}", 
-                 norm.x, norm.y, actualPos.rho, actualPos.theta);
+        broadcastSinglePosition();
     }
-
-    m_events.send(buffer, "pos", millis());
 }
 
 void SisyphusWebServer::broadcastLogs() {
@@ -610,17 +626,27 @@ void SisyphusWebServer::handleFileUpload(AsyncWebServerRequest *request, String 
         }
         
         String dirPath = "/patterns/" + basename;
-        if (!SD.exists(dirPath)) {
+        
+        // Delete existing directory only if this is a "new" upload session for this pattern
+        // (to avoid deleting it again when the companion image is uploaded right after)
+        if (SD.exists(dirPath)) {
+            if (now - m_lastUploadTime > 2000) { 
+                Serial.print("Deleting existing pattern directory: ");
+                Serial.println(dirPath);
+                removeDirectoryRecursive(dirPath.c_str());
+                SD.mkdir(dirPath);
+            }
+        } else {
             SD.mkdir(dirPath);
         }
+
+        m_lastUploadTime = now;
 
         Serial.print("Upload start: ");
         Serial.println(filename);
 
         String path = dirPath + "/" + filename;
-        if (SD.exists(path)) {
-            SD.remove(path);
-        }
+        // No need to SD.remove(path) here anymore if directory was recreated
         
         m_uploadFile = SD.open(path.c_str(), FILE_WRITE);
         if (!m_uploadFile) {

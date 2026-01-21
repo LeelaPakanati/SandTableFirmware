@@ -37,14 +37,18 @@ public:
                         JsonObject fileObj = files.add<JsonObject>();
                         fileObj["name"] = name;
                         fileObj["size"] = file.size();
+                        fileObj["time"] = file.getLastWrite();
                     }
                 } else {
                     String patternFile = name + ".thr";
                     String innerPath = "/patterns/" + name + "/" + patternFile;
                     if (SD.exists(innerPath)) {
+                        File innerFile = SD.open(innerPath);
                         JsonObject fileObj = files.add<JsonObject>();
                         fileObj["name"] = patternFile;
-                        fileObj["size"] = 0; 
+                        fileObj["size"] = innerFile.size();
+                        fileObj["time"] = innerFile.getLastWrite();
+                        innerFile.close();
                     }
                 }
                 file.close();
