@@ -12,12 +12,6 @@ struct PlaylistItem {
     : filename(f) {}
 };
 
-enum PlaylistMode {
-  SEQUENTIAL,
-  LOOP,
-  SHUFFLE
-};
-
 // Result from getNextPattern - includes clearing info
 struct NextPatternResult {
   String filename;
@@ -32,12 +26,14 @@ public:
   void addPattern(String filename);
   void removePattern(int index);
   void clear();
+  void movePattern(int fromIndex, int toIndex);
+  void shuffle(); // Randomize the list in-place
 
   int count() const { return m_playlist.size(); }
   const PlaylistItem& getItem(int index) const { return m_playlist[index]; }
 
-  void setMode(PlaylistMode mode);
-  PlaylistMode getMode() const { return m_mode; }
+  void setLoop(bool enabled) { m_loop = enabled; }
+  bool isLoop() const { return m_loop; }
 
   // Clearing settings
   void setClearingEnabled(bool enabled) { m_clearingEnabled = enabled; }
@@ -46,8 +42,15 @@ public:
   // Playlist control
   void reset();
   bool hasNext();
+  bool hasPrevious();
   NextPatternResult getNextPattern();
   int getCurrentIndex() const { return m_currentIndex; }
+  void setCurrentIndex(int index);
+
+  // Skip controls
+  void skipToIndex(int index);
+  void skipNext();
+  void skipPrevious();
 
   // File I/O
   bool saveToFile(String filename);
@@ -55,13 +58,8 @@ public:
 
 private:
   std::vector<PlaylistItem> m_playlist;
-  PlaylistMode m_mode;
+  bool m_loop;
   int m_currentIndex;
   bool m_clearingEnabled;
   bool m_isFirstPattern;  // Track if this is the first pattern (no clearing needed)
-
-  // Shuffle support
-  std::vector<int> m_shuffleIndices;
-  int m_shuffleIndex;
-  void reshuffle();
 };

@@ -36,6 +36,16 @@ inline bool initSDCard() {
     uint64_t cardSize = SD.cardSize() / (1024 * 1024);
     Serial.printf("SD Card Size: %llu MB\n", cardSize);
 
+    // Ensure directory structure exists
+    if (!SD.exists("/patterns")) {
+        Serial.println("Creating /patterns directory");
+        SD.mkdir("/patterns");
+    }
+    if (!SD.exists("/playlists")) {
+        Serial.println("Creating /playlists directory");
+        SD.mkdir("/playlists");
+    }
+
     return true;
 }
 
