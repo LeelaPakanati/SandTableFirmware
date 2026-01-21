@@ -25,12 +25,15 @@ private:
     String m_queuedPattern;
     String m_currentPattern;  // Currently running pattern filename
     bool m_hasQueuedPattern;
+    bool m_singlePatternClearing;     // Run clearing before single pattern
+    ClearingPattern m_selectedClearing; // Selected clearing pattern type
     unsigned long m_lastUploadTime;
 
     // Playlist management
     PlaylistManager m_playlist;
     bool m_playlistMode;
     bool m_runningClearing;       // True if currently running a clearing pattern
+    bool m_firstPointCleared;     // True if we've cleared the lead-in path
     String m_pendingPattern;      // Pattern to run after clearing completes
 
     // File upload handling
@@ -63,19 +66,36 @@ private:
     void handlePlaylistGet(AsyncWebServerRequest *request);
     void handlePlaylistStart(AsyncWebServerRequest *request);
     void handlePlaylistStop(AsyncWebServerRequest *request);
-    void handlePlaylistMode(AsyncWebServerRequest *request);
+    void handlePlaylistLoop(AsyncWebServerRequest *request);
+    void handlePlaylistShuffle(AsyncWebServerRequest *request);
+    void handlePlaylistMove(AsyncWebServerRequest *request);
+    void handlePlaylistSkipTo(AsyncWebServerRequest *request);
+    void handlePlaylistPrev(AsyncWebServerRequest *request);
+    void handlePlaylistNext(AsyncWebServerRequest *request);
     void handlePlaylistSave(AsyncWebServerRequest *request);
     void handlePlaylistLoad(AsyncWebServerRequest *request);
     void handlePlaylistList(AsyncWebServerRequest *request);
     void handlePlaylistClearing(AsyncWebServerRequest *request);
 
+    // Tuning handlers
+    void handleTuningGet(AsyncWebServerRequest *request);
+    void handleTuningMotionSet(AsyncWebServerRequest *request);
+    void handleTuningThetaDriverSet(AsyncWebServerRequest *request);
+    void handleTuningRhoDriverSet(AsyncWebServerRequest *request);
+    void handleTuningTestTheta(AsyncWebServerRequest *request);
+    void handleTuningTestRho(AsyncWebServerRequest *request);
+
     // Helper methods
     void processPatternQueue();
     void broadcastLogs();
+    void broadcastPosition(); // New streaming method
     String buildStatusJSON();
     String buildFileListJSON();
     String buildSystemInfoJSON();
     String getStateString();
 
     unsigned long m_lastLogBroadcast = 0;
+    unsigned long m_lastPosBroadcast = 0; // Timer for position streaming
+    double m_lastBroadcastX = -1.0;
+    double m_lastBroadcastY = -1.0;
 };

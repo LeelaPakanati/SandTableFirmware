@@ -6,8 +6,26 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sisyphus Table Control</title>
+    <title>Sisyphus Table</title>
     <style>
+        :root {
+            --bg-dark: #0f0f1a;
+            --bg-card: rgba(30, 30, 50, 0.8);
+            --bg-card-hover: rgba(40, 40, 65, 0.9);
+            --accent: #c9a227;
+            --accent-light: #e8c547;
+            --accent-dim: rgba(201, 162, 39, 0.3);
+            --text-primary: #f5f5f5;
+            --text-secondary: #a0a0b0;
+            --text-muted: #606070;
+            --border: rgba(255, 255, 255, 0.1);
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --sand-light: #e8dcc4;
+            --sand-dark: #2a2520;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -15,326 +33,632 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            background-image:
+                radial-gradient(ellipse at top, rgba(201, 162, 39, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at bottom, rgba(30, 30, 50, 0.5) 0%, transparent 50%);
             min-height: 100vh;
             padding: 20px;
-            color: #333;
+            color: var(--text-primary);
         }
 
         .container {
-            max-width: 800px;
+            max-width: 1000px;
             margin: 0 auto;
         }
 
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .logo {
+            font-size: 2.5em;
+            font-weight: 300;
+            letter-spacing: 8px;
+            color: var(--text-primary);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .logo span {
+            color: var(--accent);
+        }
+
+        .tagline {
+            font-size: 0.9em;
+            color: var(--text-muted);
+            letter-spacing: 2px;
+        }
+
+        /* Navigation */
+        .navbar {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 32px;
+            padding: 6px;
+            background: var(--bg-card);
+            border-radius: 50px;
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 10px 24px;
+            border-radius: 50px;
+            font-weight: 500;
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+        }
+
+        .nav-link:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .nav-link.active {
+            background: var(--accent);
+            color: var(--bg-dark);
+            font-weight: 600;
+        }
+
+        /* Cards */
         .card {
-            background: white;
-            border-radius: 12px;
+            background: var(--bg-card);
+            border-radius: 20px;
             padding: 24px;
             margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
         }
 
-        h1 {
-            color: white;
-            text-align: center;
-            margin-bottom: 30px;
-            font-size: 2.5em;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        .card:hover {
+            background: var(--bg-card-hover);
+            border-color: rgba(201, 162, 39, 0.2);
         }
 
-        h2 {
-            color: #667eea;
+        .card-title {
+            font-size: 0.8em;
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--accent);
             margin-bottom: 16px;
-            font-size: 1.5em;
-            border-bottom: 2px solid #667eea;
-            padding-bottom: 8px;
         }
 
+        /* Status Grid */
         .status-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
             gap: 16px;
-            margin-bottom: 16px;
         }
 
         .status-item {
-            background: #f7fafc;
-            padding: 12px;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
+            text-align: center;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
         }
 
         .status-label {
-            font-size: 0.875em;
-            color: #718096;
-            margin-bottom: 4px;
+            font-size: 0.75em;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
         }
 
         .status-value {
-            font-size: 1.25em;
+            font-size: 1.2em;
             font-weight: 600;
-            color: #2d3748;
+            color: var(--text-primary);
         }
 
         .status-badge {
             display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.875em;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.8em;
             font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
-        .status-idle {
-            background: #48bb78;
-            color: white;
+        .status-idle { background: var(--success); color: #000; }
+        .status-running { background: var(--accent); color: #000; }
+        .status-paused { background: var(--warning); color: #000; }
+        .status-clearing { background: #a78bfa; color: #000; }
+        .status-stopping { background: var(--danger); color: #000; }
+
+        /* Canvas Viewer */
+        .viewer-wrapper {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 16px;
         }
 
-        .status-running {
-            background: #4299e1;
-            color: white;
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            aspect-ratio: 1;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--sand-light) 0%, #d4c4a8 70%, #baa888 100%);
+            box-shadow:
+                inset 0 0 60px rgba(0, 0, 0, 0.3),
+                0 0 40px rgba(201, 162, 39, 0.2),
+                0 20px 60px rgba(0, 0, 0, 0.5);
+            padding: 8px;
         }
 
-        .status-paused {
-            background: #ed8936;
-            color: white;
+        .canvas-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            overflow: hidden;
         }
 
-        .status-clearing {
-            background: #9f7aea;
-            color: white;
+        .viewer-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
         }
 
-        .status-stopping {
-            background: #ed8936;
-            color: white;
+        .position-display {
+            text-align: center;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 0.9em;
+            color: var(--text-secondary);
         }
 
-        .slider-container {
-            margin: 20px 0;
+        /* Sliders */
+        .slider-section {
+            margin-bottom: 20px;
         }
 
-        .slider-label {
+        .slider-header {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
-            font-weight: 500;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .slider-title {
+            font-size: 0.9em;
+            color: var(--text-secondary);
+        }
+
+        .slider-value {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: var(--accent);
+            min-width: 50px;
+            text-align: right;
         }
 
         input[type="range"] {
             width: 100%;
-            height: 8px;
-            border-radius: 4px;
-            background: #e2e8f0;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.1);
             outline: none;
             -webkit-appearance: none;
         }
 
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            appearance: none;
             width: 20px;
             height: 20px;
             border-radius: 50%;
-            background: #667eea;
+            background: var(--accent);
             cursor: pointer;
+            box-shadow: 0 2px 10px rgba(201, 162, 39, 0.5);
+            transition: transform 0.2s;
         }
 
-        input[type="range"]::-moz-range-thumb {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #667eea;
-            cursor: pointer;
-            border: none;
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
         }
 
-        .form-group {
-            margin-bottom: 16px;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            color: #2d3748;
-        }
-
-        select, input[type="file"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e2e8f0;
-            border-radius: 8px;
-            font-size: 1em;
-            background: white;
-        }
-
-        select:focus, input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        .button-group {
+        /* Tabs */
+        .tabs {
             display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 24px;
+            padding: 4px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-weight: 500;
+            padding: 12px 20px;
+            cursor: pointer;
+            border-radius: 10px;
+            transition: all 0.3s;
+            font-size: 0.9em;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .tab-btn.active {
+            background: var(--accent);
+            color: var(--bg-dark);
+            font-weight: 600;
+        }
+
+        /* Form Elements */
+        select {
+            width: 100%;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 1em;
+            background: #1a1a2e;
+            color: var(--text-primary);
+            cursor: pointer;
+            margin-bottom: 12px;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        select option {
+            background: #1a1a2e;
+            color: #f5f5f5;
+            padding: 12px;
+        }
+
+        /* Buttons */
+        .button-row {
+            display: flex;
+            gap: 10px;
         }
 
         button {
             flex: 1;
-            min-width: 120px;
-            padding: 12px 24px;
+            padding: 14px 20px;
             border: none;
-            border-radius: 8px;
-            font-size: 1em;
+            border-radius: 12px;
+            font-size: 0.95em;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: all 0.3s ease;
         }
 
         .btn-primary {
-            background: #667eea;
-            color: white;
+            background: var(--accent);
+            color: var(--bg-dark);
         }
 
         .btn-primary:hover {
-            background: #5a67d8;
+            background: var(--accent-light);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(201, 162, 39, 0.3);
         }
 
         .btn-secondary {
-            background: #ed8936;
-            color: white;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
         }
 
         .btn-secondary:hover {
-            background: #dd6b20;
+            background: rgba(255, 255, 255, 0.15);
+            border-color: var(--accent-dim);
         }
 
         .btn-danger {
-            background: #f56565;
-            color: white;
+            background: rgba(248, 113, 113, 0.2);
+            color: var(--danger);
+            border: 1px solid rgba(248, 113, 113, 0.3);
         }
 
         .btn-danger:hover {
-            background: #e53e3e;
+            background: var(--danger);
+            color: #000;
         }
 
-        .btn-success {
-            background: #48bb78;
-            color: white;
+        /* Now Playing Card */
+        .now-playing {
+            background: linear-gradient(135deg, var(--accent) 0%, #8b6914 100%);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            color: var(--bg-dark);
         }
 
-        .btn-success:hover {
-            background: #38a169;
-        }
-
-        .file-list {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .file-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px;
-            background: #f7fafc;
-            border-radius: 8px;
+        .np-label {
+            font-size: 0.7em;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            opacity: 0.7;
+            text-align: center;
             margin-bottom: 8px;
         }
 
-        .file-info {
-            flex: 1;
-        }
-
-        .file-name {
+        .np-title {
+            font-size: 1.2em;
             font-weight: 600;
-            color: #2d3748;
-        }
-
-        .file-size {
-            font-size: 0.875em;
-            color: #718096;
-        }
-
-        .btn-small {
-            padding: 6px 12px;
-            font-size: 0.875em;
-            min-width: auto;
-        }
-
-        .upload-area {
-            border: 2px dashed #cbd5e0;
-            border-radius: 8px;
-            padding: 24px;
             text-align: center;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .np-progress {
+            font-size: 0.85em;
+            text-align: center;
+            opacity: 0.8;
             margin-bottom: 16px;
-            cursor: pointer;
-            transition: all 0.3s;
         }
 
-        .upload-area:hover {
-            border-color: #667eea;
-            background: #f7fafc;
-        }
-
-        .system-info {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        .np-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
             gap: 12px;
-            font-size: 0.875em;
+        }
+
+        .np-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: none;
+            padding: 0;
+        }
+
+        .np-btn-small {
+            background: rgba(0, 0, 0, 0.2);
+            color: var(--bg-dark);
+        }
+
+        .np-btn-small:hover {
+            background: rgba(0, 0, 0, 0.3);
+            transform: scale(1.1);
+        }
+
+        .np-btn-main {
+            width: 56px;
+            height: 56px;
+            background: var(--bg-dark);
+            color: var(--accent);
+            font-size: 20px;
+        }
+
+        .np-btn-main:hover {
+            transform: scale(1.1);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Playlist */
+        .playlist-options {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .playlist-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85em;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .playlist-toggle input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+        }
+
+        .playlist-container {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+
+        .playlist-empty {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 40px 20px;
+        }
+
+        .playlist-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+            cursor: pointer;
+        }
+
+        .playlist-item:last-child {
+            border-bottom: none;
+        }
+
+        .playlist-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .playlist-item.current {
+            background: var(--accent-dim);
+        }
+
+        .playlist-num {
+            width: 28px;
+            font-size: 0.85em;
+            color: var(--text-muted);
+        }
+
+        .playlist-item.current .playlist-num {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .playlist-name {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .playlist-item.current .playlist-name {
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        .playlist-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .playlist-action-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: none;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 12px;
+            flex: none;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .playlist-action-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .playlist-action-btn.delete:hover {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        /* Playlist Save/Load */
+        .playlist-save-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .playlist-save-row input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            color: var(--text-primary);
+            font-size: 0.9em;
+        }
+
+        .playlist-save-row input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .playlist-save-row button {
+            flex: none;
+            padding: 12px 20px;
+        }
+
+        /* System Info */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
         }
 
         .info-item {
             display: flex;
             justify-content: space-between;
-            padding: 8px;
-            background: #f7fafc;
-            border-radius: 6px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
         }
 
-        @media (max-width: 768px) {
-            body {
-                padding: 10px;
-            }
-
-            h1 {
-                font-size: 1.75em;
-            }
-
-            .button-group {
-                flex-direction: column;
-            }
-
-            button {
-                min-width: 100%;
-            }
+        .info-label {
+            color: var(--text-muted);
+            font-size: 0.85em;
         }
 
-        .loading {
-            opacity: 0.6;
-            pointer-events: none;
+        .info-value {
+            color: var(--text-primary);
+            font-weight: 500;
+            font-size: 0.85em;
         }
 
-        .viewer-canvas {
-            width: 100%;
-            max-width: 400px;
-            height: auto;
-            border: 2px solid #e2e8f0;
-            border-radius: 8px;
-            background: #f7fafc;
+        /* Console */
+        .console-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .console-status {
+            font-size: 0.75em;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+
+        .console-connected {
+            background: var(--success);
+            color: #000;
+        }
+
+        .console-disconnected {
+            background: var(--danger);
+            color: #fff;
         }
 
         .console-container {
-            background: #1a1a2e;
-            border-radius: 8px;
-            padding: 12px;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 12px;
-            line-height: 1.4;
-            max-height: 300px;
+            background: #0a0a12;
+            border-radius: 12px;
+            padding: 16px;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            max-height: 200px;
             overflow-y: auto;
-            color: #00ff00;
+            color: var(--success);
         }
 
         .console-line {
@@ -344,36 +668,100 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             word-wrap: break-word;
         }
 
-        .console-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        /* Pattern List */
+        .pattern-list {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
             margin-bottom: 12px;
+            background: rgba(0, 0, 0, 0.2);
         }
 
-        .console-status {
-            font-size: 0.875em;
-            padding: 4px 8px;
-            border-radius: 4px;
+        .pattern-list-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.2s;
         }
 
-        .console-connected {
-            background: #48bb78;
-            color: white;
+        .pattern-list-item:hover {
+            background: rgba(255, 255, 255, 0.05);
         }
 
-        .console-disconnected {
-            background: #f56565;
-            color: white;
+        .pattern-list-item.selected {
+            background: var(--accent-dim);
+            border-left: 3px solid var(--accent);
+        }
+
+        .pattern-thumb {
+            width: 48px;
+            height: 48px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.3);
+            margin-right: 12px;
+            object-fit: cover;
+        }
+
+        .pattern-info {
+            flex: 1;
+        }
+
+        .pattern-name {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .pattern-size {
+            font-size: 0.8em;
+            color: var(--text-muted);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            body { padding: 12px; }
+            .logo { font-size: 1.8em; letter-spacing: 4px; }
+            .status-grid { grid-template-columns: repeat(2, 1fr); }
+            .info-grid { grid-template-columns: 1fr; }
+            .canvas-container { max-width: 350px; }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--text-muted);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Sisyphus Table Control</h1>
+        <div class="header">
+            <div class="logo">Sisy<span>phus</span></div>
+            <div class="tagline">Sand Table Control</div>
+        </div>
+
+        <nav class="navbar">
+            <a href="/" class="nav-link active">Dashboard</a>
+            <a href="/files" class="nav-link">Files</a>
+            <a href="/tuning" class="nav-link">Tuning</a>
+        </nav>
 
         <div class="card">
-            <h2>Status</h2>
+            <div class="card-title">Status</div>
             <div class="status-grid">
                 <div class="status-item">
                     <div class="status-label">State</div>
@@ -382,11 +770,11 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     </div>
                 </div>
                 <div class="status-item">
-                    <div class="status-label">Current Pattern</div>
-                    <div class="status-value" id="current-pattern">None</div>
+                    <div class="status-label">Pattern</div>
+                    <div class="status-value" id="current-pattern" style="font-size: 0.9em;">None</div>
                 </div>
                 <div class="status-item">
-                    <div class="status-label">LED Brightness</div>
+                    <div class="status-label">Brightness</div>
                     <div class="status-value"><span id="status-brightness">50</span>%</div>
                 </div>
                 <div class="status-item">
@@ -394,56 +782,60 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     <div class="status-value" id="uptime">0s</div>
                 </div>
             </div>
-         </div>
-
-         <div class="card">
-             <h2>Position Viewer</h2>
-             <canvas id="position-canvas" class="viewer-canvas" width="400" height="400"></canvas>
-             <div style="text-align: center; margin-top: 12px;">
-                 <div style="font-size: 0.875em; color: #718096;">Live view of ball position and path</div>
-                 <div id="position-coords" style="margin-top: 8px; font-family: monospace; font-size: 0.9em; color: #2d3748;">
-                     Position: Loading...
-                 </div>
-             </div>
-         </div>
-
-         <div class="card">
-             <h2>LED Brightness</h2>
-            <div class="slider-container">
-                <div class="slider-label">
-                    <span>Brightness</span>
-                    <span id="brightness-value">50%</span>
-                </div>
-                <input type="range" id="brightness-slider" min="0" max="100" value="50">
-            </div>
-            <div class="button-group" style="margin-top: 12px;">
-                <button class="btn-danger" id="btn-led-off">Turn Off</button>
-            </div>
         </div>
 
         <div class="card">
-            <h2>Motor Speed</h2>
-            <div class="slider-container">
-                <div class="slider-label">
-                    <span>Speed</span>
-                    <span id="speed-value">5</span>
+            <div class="card-title">Position</div>
+            <div class="viewer-wrapper">
+                <div class="canvas-container">
+                    <div class="canvas-inner">
+                        <canvas id="path-canvas" class="viewer-canvas" width="800" height="800"></canvas>
+                        <img id="pattern-overlay" class="viewer-canvas" style="object-fit: cover; opacity: 0.6; display: none;" src="" onerror="this.style.display='none'">
+                        <canvas id="ball-canvas" class="viewer-canvas" width="800" height="800"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="position-display" id="position-coords">Loading...</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Controls</div>
+            <div class="slider-section">
+                <div class="slider-header">
+                    <span class="slider-title">LED Brightness</span>
+                    <span class="slider-value" id="brightness-value">50%</span>
+                </div>
+                <input type="range" id="brightness-slider" min="0" max="100" value="50">
+            </div>
+            <div class="slider-section">
+                <div class="slider-header">
+                    <span class="slider-title">Motor Speed</span>
+                    <span class="slider-value" id="speed-value">5</span>
                 </div>
                 <input type="range" id="speed-slider" min="1" max="10" value="5">
             </div>
         </div>
 
         <div class="card">
-            <h2>Pattern Control</h2>
-            <div class="form-group">
-                <label for="pattern-select">Select Pattern</label>
-                <select id="pattern-select">
-                    <option value="">Loading patterns...</option>
-                </select>
+            <div class="tabs">
+                <button class="tab-btn active" id="tab-btn-single" onclick="controller.switchTab('single')">Single Pattern</button>
+                <button class="tab-btn" id="tab-btn-playlist" onclick="controller.switchTab('playlist')">Playlist</button>
             </div>
-            <div class="form-group">
-                <label for="clearing-select">Clearing Pattern</label>
+
+            <div id="tab-single">
+                <div id="pattern-list-container" class="pattern-list">
+                    <!-- Populated by JS -->
+                    <div style="padding: 20px; text-align: center; color: var(--text-muted);">Loading patterns...</div>
+                </div>
+                
+                <div class="button-row" style="margin-bottom: 12px;">
+                    <button class="btn-secondary" id="btn-upload-new">Upload New Pattern</button>
+                    <input type="file" id="upload-pattern" accept=".thr" style="display: none;">
+                    <input type="file" id="upload-image" accept="image/png,image/jpeg" style="display: none;">
+                </div>
+
                 <select id="clearing-select">
-                    <option value="none">None (No Clearing)</option>
+                    <option value="none">No Clearing</option>
                     <option value="random">Random</option>
                     <option value="spiral_outward">Spiral Outward</option>
                     <option value="spiral_inward">Spiral Inward</option>
@@ -451,98 +843,93 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     <option value="zigzag_radial">Zigzag Radial</option>
                     <option value="petal_flower">Petal Flower</option>
                 </select>
+                <div class="button-row" style="margin-bottom: 12px;">
+                    <button class="btn-primary" id="btn-start">Start</button>
+                    <button class="btn-secondary" id="btn-pause">Pause</button>
+                    <button class="btn-danger" id="btn-stop">Stop</button>
+                </div>
+                <div class="button-row">
+                    <button class="btn-secondary" id="btn-add-to-playlist">+ Add to Playlist</button>
+                    <button class="btn-secondary" id="btn-home">Home</button>
+                </div>
             </div>
-            <div class="button-group">
-                <button class="btn-primary" id="btn-start">▶ Start</button>
-                <button class="btn-secondary" id="btn-pause">⏸ Pause</button>
-                <button class="btn-danger" id="btn-stop">⏹ Stop</button>
-            </div>
-            <div class="button-group" style="margin-top: 12px;">
-                <button class="btn-secondary" id="btn-home">🏠 Home Device</button>
+
+            <div id="tab-playlist" style="display: none;">
+                <div class="now-playing">
+                    <div class="np-label">Now Playing</div>
+                    <div class="np-title" id="now-playing-name">No pattern playing</div>
+                    <div class="np-progress" id="playlist-progress">0 / 0</div>
+                    <div class="np-controls">
+                        <button class="np-btn np-btn-small" id="btn-playlist-prev">⏮</button>
+                        <button class="np-btn np-btn-main" id="btn-playlist-start">▶</button>
+                        <button class="np-btn np-btn-small" id="btn-playlist-stop">⏹</button>
+                        <button class="np-btn np-btn-small" id="btn-playlist-next">⏭</button>
+                    </div>
+                </div>
+
+                <div class="playlist-options">
+                    <button class="btn-secondary" id="btn-playlist-shuffle" style="flex: none; padding: 10px 16px;">Shuffle</button>
+                    <div style="display: flex; gap: 16px;">
+                        <label class="playlist-toggle">
+                            <input type="checkbox" id="playlist-loop-toggle">
+                            Loop
+                        </label>
+                        <label class="playlist-toggle">
+                            <input type="checkbox" id="playlist-clearing-toggle" checked>
+                            Clearing
+                        </label>
+                    </div>
+                </div>
+
+                <div class="playlist-container" id="playlist-items">
+                    <div class="playlist-empty">Playlist is empty</div>
+                </div>
+
+                <div class="button-row" style="margin-bottom: 16px;">
+                    <button class="btn-primary" id="btn-add-all-to-playlist">+ Add All Patterns</button>
+                    <button class="btn-danger" id="btn-clear-playlist" style="flex: 0.4;">Clear</button>
+                </div>
+
+                <div class="playlist-save-row">
+                    <input type="text" id="playlist-name-input" placeholder="Playlist name...">
+                    <button class="btn-secondary" id="btn-save-playlist">Save</button>
+                    <button class="btn-secondary" id="btn-load-playlist">Load</button>
+                </div>
             </div>
         </div>
 
         <div class="card">
-            <h2>Playlist</h2>
-            <div class="form-group">
-                <label for="playlist-mode-select">Playback Mode</label>
-                <select id="playlist-mode-select">
-                    <option value="sequential">Sequential</option>
-                    <option value="loop">Loop</option>
-                    <option value="shuffle">Shuffle</option>
-                </select>
-            </div>
-            <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" id="playlist-clearing-toggle" checked style="width: auto;">
-                <label for="playlist-clearing-toggle" style="margin-bottom: 0;">Run clearing pattern between items</label>
-            </div>
-            <div class="button-group" style="margin-bottom: 16px;">
-                <button class="btn-primary" id="btn-playlist-start">▶ Start Playlist</button>
-                <button class="btn-danger" id="btn-playlist-stop">⏹ Stop</button>
-            </div>
-            <div id="playlist-items" style="margin-bottom: 16px;">
-                <p style="text-align:center; color:#718096;">Playlist is empty</p>
-            </div>
-            <div class="button-group">
-                <button class="btn-secondary" id="btn-add-to-playlist">+ Add Current Pattern</button>
-                <button class="btn-primary" id="btn-add-all-to-playlist">+ Add All Patterns</button>
-                <button class="btn-secondary" id="btn-clear-playlist">Clear All</button>
-            </div>
-            <div style="margin-top: 16px;">
-                <div class="form-group">
-                    <label for="playlist-name-input">Playlist Name</label>
-                    <input type="text" id="playlist-name-input" placeholder="my-playlist" style="width: 100%; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px;">
-                </div>
-                <div class="button-group">
-                    <button class="btn-secondary" id="btn-save-playlist">💾 Save</button>
-                    <button class="btn-secondary" id="btn-load-playlist">📂 Load</button>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>File Management</h2>
-            <div class="upload-area" id="upload-area">
-                <p>Click to upload .thr file or drag and drop</p>
-                <input type="file" id="file-input" accept=".thr" style="display:none">
-            </div>
-            <div class="file-list" id="file-list">
-                <p style="text-align:center; color:#718096;">Loading files...</p>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>System Information</h2>
-            <div class="system-info" id="system-info">
+            <div class="card-title">System</div>
+            <div class="info-grid">
                 <div class="info-item">
-                    <span>Free Heap:</span>
-                    <span id="heap">-</span>
+                    <span class="info-label">Free Memory</span>
+                    <span class="info-value" id="heap">-</span>
                 </div>
                 <div class="info-item">
-                    <span>WiFi SSID:</span>
-                    <span id="wifi-ssid">-</span>
+                    <span class="info-label">WiFi</span>
+                    <span class="info-value" id="wifi-ssid">-</span>
                 </div>
                 <div class="info-item">
-                    <span>IP Address:</span>
-                    <span id="wifi-ip">-</span>
+                    <span class="info-label">IP Address</span>
+                    <span class="info-value" id="wifi-ip">-</span>
                 </div>
                 <div class="info-item">
-                    <span>Signal:</span>
-                    <span id="wifi-rssi">-</span>
+                    <span class="info-label">Signal</span>
+                    <span class="info-value" id="wifi-rssi">-</span>
                 </div>
             </div>
         </div>
 
         <div class="card">
             <div class="console-header">
-                <h2 style="margin-bottom: 0; border-bottom: none; padding-bottom: 0;">Console</h2>
+                <div class="card-title" style="margin-bottom: 0;">Console</div>
                 <div>
                     <span id="console-status" class="console-status console-disconnected">Disconnected</span>
-                    <button class="btn-small btn-secondary" id="btn-clear-console" style="margin-left: 8px;">Clear</button>
+                    <button class="btn-secondary" id="btn-clear-console" style="padding: 6px 12px; font-size: 0.8em; margin-left: 8px;">Clear</button>
                 </div>
             </div>
             <div class="console-container" id="console-output">
-                <div class="console-line">Connecting to console...</div>
+                <div class="console-line">Connecting...</div>
             </div>
         </div>
     </div>
@@ -552,26 +939,94 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             constructor() {
                 this.apiBase = '/api';
                 this.statusInterval = null;
-                this.positionInterval = null;
-                this.canvas = null;
-                this.ctx = null;
-                this.path = []; // Client-side path history
                 this.lastPatternName = '';
+                this.selectedPattern = null;
+                this.files = [];
                 this.init();
             }
 
             async init() {
                 this.setupCanvas();
                 this.setupEventListeners();
+                this.setupUploadHandlers();
                 this.setupConsole();
                 await this.loadFileList();
                 await this.loadSystemInfo();
                 await this.loadPlaylistStatus();
                 this.startStatusPolling();
-                this.startPositionPolling();
+            }
+            
+            setupUploadHandlers() {
+                const btnUpload = document.getElementById('btn-upload-new');
+                const filePattern = document.getElementById('upload-pattern');
+                const fileImage = document.getElementById('upload-image');
+
+                btnUpload.addEventListener('click', () => {
+                    filePattern.value = ''; // Reset
+                    filePattern.click();
+                });
+
+                filePattern.addEventListener('change', async () => {
+                    if (filePattern.files.length === 0) return;
+                    const patternFile = filePattern.files[0];
+                    
+                    if (confirm('Do you want to add a preview image for this pattern?')) {
+                        fileImage.value = ''; // Reset
+                        fileImage.click();
+                        
+                        // Wait for image selection
+                        const handleImage = async () => {
+                            const imageFile = fileImage.files.length > 0 ? fileImage.files[0] : null;
+                            await this.performUpload(patternFile, imageFile);
+                            fileImage.removeEventListener('change', handleImage); // Cleanup
+                        };
+                        fileImage.addEventListener('change', handleImage);
+                    } else {
+                        await this.performUpload(patternFile, null);
+                    }
+                });
             }
 
-            // ... (setupConsole, connectConsole, appendToConsole remains same)
+            async performUpload(patternFile, imageFile) {
+                const statusBadge = document.getElementById('state-badge');
+                const originalText = statusBadge.textContent;
+                statusBadge.textContent = "UPLOADING...";
+                statusBadge.className = "status-badge status-warning";
+
+                try {
+                    // Upload pattern
+                    const fdPattern = new FormData();
+                    fdPattern.append('file', patternFile);
+                    await fetch(this.apiBase + '/files/upload', { method: 'POST', body: fdPattern });
+
+                    // Upload image if present
+                    if (imageFile) {
+                        const fdImage = new FormData();
+                        // Rename image to match pattern basename + .png
+                        let basename = patternFile.name;
+                        if (basename.endsWith('.thr')) basename = basename.substring(0, basename.length - 4);
+                        const imageName = basename + '.png';
+                        
+                        fdImage.append('file', imageFile, imageName);
+                        await fetch(this.apiBase + '/files/upload', { method: 'POST', body: fdImage });
+                    }
+
+                    alert('Upload complete!');
+                    await this.loadFileList();
+                } catch (err) {
+                    alert('Upload failed: ' + err.message);
+                } finally {
+                    statusBadge.textContent = originalText;
+                    // Restore original class will happen on next status update
+                }
+            }
+
+            switchTab(tabName) {
+                document.getElementById('tab-btn-single').classList.toggle('active', tabName === 'single');
+                document.getElementById('tab-btn-playlist').classList.toggle('active', tabName === 'playlist');
+                document.getElementById('tab-single').style.display = tabName === 'single' ? 'block' : 'none';
+                document.getElementById('tab-playlist').style.display = tabName === 'playlist' ? 'block' : 'none';
+            }
 
             setupConsole() {
                 this.consoleOutput = document.getElementById('console-output');
@@ -596,17 +1051,18 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.eventSource.onerror = () => {
                     this.consoleStatus.textContent = 'Disconnected';
                     this.consoleStatus.className = 'console-status console-disconnected';
-                    // Try to reconnect after 2 seconds
                     setTimeout(() => this.connectConsole(), 2000);
                 };
 
-                this.eventSource.addEventListener('log', (e) => {
-                    this.appendToConsole(e.data);
+                this.eventSource.addEventListener('log', (e) => this.appendToConsole(e.data));
+                this.eventSource.addEventListener('pos', (e) => {
+                    try {
+                        this.drawStreamPosition(JSON.parse(e.data));
+                    } catch (err) {}
                 });
             }
 
             appendToConsole(text) {
-                // Split by newlines and add each line
                 const lines = text.split('\n');
                 for (const line of lines) {
                     if (line.trim() === '') continue;
@@ -615,358 +1071,239 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     div.textContent = line;
                     this.consoleOutput.appendChild(div);
                 }
-
-                // Limit number of lines
                 while (this.consoleOutput.children.length > this.maxConsoleLines) {
                     this.consoleOutput.removeChild(this.consoleOutput.firstChild);
                 }
-
-                // Auto-scroll to bottom
                 this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
             }
 
             setupCanvas() {
-                this.canvas = document.getElementById('position-canvas');
-                this.ctx = this.canvas.getContext('2d');
-                // Initial draw of table
+                this.pathCanvas = document.getElementById('path-canvas');
+                this.ballCanvas = document.getElementById('ball-canvas');
+                this.ctxPath = this.pathCanvas.getContext('2d');
+                this.ctxBall = this.ballCanvas.getContext('2d');
                 this.drawTable();
+            }
+
+            drawTable() {
+                const ctx = this.ctxPath;
+                if (!ctx) return;
+
+                const centerX = this.pathCanvas.width / 2;
+                const centerY = this.pathCanvas.height / 2;
+                const radius = Math.min(centerX, centerY) - 20;
+
+                ctx.clearRect(0, 0, this.pathCanvas.width, this.pathCanvas.height);
+
+                // Draw subtle center marker
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, 4, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+
+            drawStreamPosition(data) {
+                if (!this.ctxPath || !this.ctxBall) return;
+
+                if (data.clear) {
+                    this.clearPath();
+                }
+
+                const centerX = this.pathCanvas.width / 2;
+                const centerY = this.pathCanvas.height / 2;
+                const radius = Math.min(centerX, centerY) - 20;
+
+                const x = centerX + (data.x - 0.5) * 2 * radius;
+                const y = centerY + (data.y - 0.5) * 2 * radius;
+
+                // Draw path line
+                if (this.lastX !== undefined) {
+                    const ctx = this.ctxPath;
+                    ctx.strokeStyle = 'rgba(42, 37, 32, 0.8)';
+                    ctx.lineWidth = 3;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(this.lastX, this.lastY);
+                    ctx.lineTo(x, y);
+                    ctx.stroke();
+                }
+
+                // Draw ball
+                const ctxB = this.ctxBall;
+                ctxB.clearRect(0, 0, this.ballCanvas.width, this.ballCanvas.height);
+
+                // Ball shadow
+                ctxB.fillStyle = 'rgba(0, 0, 0, 0.2)';
+                ctxB.beginPath();
+                ctxB.arc(x + 2, y + 2, 10, 0, 2 * Math.PI);
+                ctxB.fill();
+
+                // Ball
+                const gradient = ctxB.createRadialGradient(x - 3, y - 3, 0, x, y, 10);
+                gradient.addColorStop(0, '#888');
+                gradient.addColorStop(1, '#333');
+                ctxB.fillStyle = gradient;
+                ctxB.beginPath();
+                ctxB.arc(x, y, 10, 0, 2 * Math.PI);
+                ctxB.fill();
+
+                this.lastX = x;
+                this.lastY = y;
+
+                document.getElementById('position-coords').textContent =
+                    `ρ ${data.r.toFixed(1)}mm  ·  θ ${(data.t * 180 / Math.PI).toFixed(1)}°`;
+            }
+
+            clearPath() {
+                this.lastX = undefined;
+                this.lastY = undefined;
+                this.drawTable();
+                if (this.ctxBall) {
+                    this.ctxBall.clearRect(0, 0, this.ballCanvas.width, this.ballCanvas.height);
+                }
             }
 
             setupEventListeners() {
                 document.getElementById('brightness-slider').addEventListener('input', (e) => {
-                    const value = e.target.value;
-                    document.getElementById('brightness-value').textContent = value + '%';
+                    document.getElementById('brightness-value').textContent = e.target.value + '%';
                 });
-
                 document.getElementById('brightness-slider').addEventListener('change', (e) => {
                     this.setBrightness(parseInt(e.target.value));
                 });
 
-                document.getElementById('btn-led-off').addEventListener('click', () => {
-                    this.setBrightness(0);
-                    document.getElementById('brightness-slider').value = 0;
-                    document.getElementById('brightness-value').textContent = '0%';
-                });
-
                 document.getElementById('speed-slider').addEventListener('input', (e) => {
-                    const value = e.target.value;
-                    document.getElementById('speed-value').textContent = value;
+                    document.getElementById('speed-value').textContent = e.target.value;
                 });
-
                 document.getElementById('speed-slider').addEventListener('change', (e) => {
                     this.setSpeed(parseInt(e.target.value));
                 });
 
-                document.getElementById('btn-start').addEventListener('click', () => { this.clearPath(); this.startPattern(); }); // Clear path on start
+                document.getElementById('btn-start').addEventListener('click', () => { this.clearPath(); this.startPattern(); });
                 document.getElementById('btn-pause').addEventListener('click', () => this.pausePattern());
                 document.getElementById('btn-stop').addEventListener('click', () => this.stopPattern());
-                document.getElementById('btn-home').addEventListener('click', () => { this.clearPath(); this.homeDevice(); }); // Clear on home
+                document.getElementById('btn-home').addEventListener('click', () => { this.clearPath(); this.homeDevice(); });
 
-                // Playlist event listeners
                 document.getElementById('btn-add-to-playlist').addEventListener('click', () => this.addToPlaylist());
                 document.getElementById('btn-add-all-to-playlist').addEventListener('click', () => this.addAllToPlaylist());
                 document.getElementById('btn-clear-playlist').addEventListener('click', () => this.clearPlaylist());
                 document.getElementById('btn-playlist-start').addEventListener('click', () => { this.clearPath(); this.startPlaylist(); });
                 document.getElementById('btn-playlist-stop').addEventListener('click', () => this.stopPlaylist());
+                document.getElementById('btn-playlist-prev').addEventListener('click', () => this.playlistPrev());
+                document.getElementById('btn-playlist-next').addEventListener('click', () => this.playlistNext());
                 document.getElementById('btn-save-playlist').addEventListener('click', () => this.savePlaylist());
                 document.getElementById('btn-load-playlist').addEventListener('click', () => this.loadPlaylist());
-                document.getElementById('playlist-mode-select').addEventListener('change', (e) => this.setPlaylistMode(e.target.value));
+                document.getElementById('btn-playlist-shuffle').addEventListener('click', () => this.shufflePlaylist());
+                document.getElementById('playlist-loop-toggle').addEventListener('change', (e) => this.setPlaylistLoop(e.target.checked));
                 document.getElementById('playlist-clearing-toggle').addEventListener('change', (e) => this.setPlaylistClearing(e.target.checked));
-
-                const uploadArea = document.getElementById('upload-area');
-                const fileInput = document.getElementById('file-input');
-
-                uploadArea.addEventListener('click', () => fileInput.click());
-                fileInput.addEventListener('change', (e) => this.uploadFile(e.target.files[0]));
-
-                uploadArea.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    uploadArea.style.borderColor = '#667eea';
-                });
-
-                uploadArea.addEventListener('dragleave', () => {
-                    uploadArea.style.borderColor = '#cbd5e0';
-                });
-
-                uploadArea.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    uploadArea.style.borderColor = '#cbd5e0';
-                    if (e.dataTransfer.files.length > 0) {
-                        this.uploadFile(e.dataTransfer.files[0]);
-                    }
-                });
             }
-
-            // ... (getStatus, getPosition remains same)
-
-            drawTable() {
-                const ctx = this.ctx;
-                const centerX = this.canvas.width / 2;
-                const centerY = this.canvas.height / 2;
-                const radius = Math.min(centerX, centerY) - 20;
-
-                // Clear canvas
-                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-
-                // Draw table circle
-                ctx.strokeStyle = '#cbd5e0';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-                ctx.stroke();
-
-                // Draw center point
-                ctx.fillStyle = '#cbd5e0';
-                ctx.beginPath();
-                ctx.arc(centerX, centerY, 3, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-
-            drawPosition(data) {
-                this.drawTable();
-
-                const ctx = this.ctx;
-                const centerX = this.canvas.width / 2;
-                const centerY = this.canvas.height / 2;
-                const radius = Math.min(centerX, centerY) - 20;
-
-                // Update Path History
-                if (data.current) {
-                    // Check if pattern changed, if so clear path?
-                    // Done in status check mostly, but also here:
-                    // Just accumulate points.
-                    const newPoint = { x: data.current.x, y: data.current.y };
-                    
-                    // Avoid duplicate points
-                    if (this.path.length === 0 || 
-                        Math.abs(this.path[this.path.length-1].x - newPoint.x) > 0.001 ||
-                        Math.abs(this.path[this.path.length-1].y - newPoint.y) > 0.001) {
-                        this.path.push(newPoint);
-                    }
-
-                    // Limit path history (client side limit)
-                    if (this.path.length > 500) {
-                        this.path.shift();
-                    }
-                }
-
-                // Draw path
-                if (this.path.length > 1) {
-                    ctx.strokeStyle = '#667eea';
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    for (let i = 0; i < this.path.length; i++) {
-                        const point = this.path[i];
-                        const x = centerX + (point.x - 0.5) * 2 * radius;
-                        const y = centerY + (point.y - 0.5) * 2 * radius;
-                        if (i === 0) {
-                            ctx.moveTo(x, y);
-                        } else {
-                            ctx.lineTo(x, y);
-                        }
-                    }
-                    ctx.stroke();
-                }
-
-                // Draw current position
-                if (data.current) {
-                    const x = centerX + (data.current.x - 0.5) * 2 * radius;
-                    const y = centerY + (data.current.y - 0.5) * 2 * radius;
-
-                    ctx.fillStyle = '#48bb78';
-                    ctx.beginPath();
-                    ctx.arc(x, y, 8, 0, 2 * Math.PI);
-                    ctx.fill();
-
-                    // Draw ball outline
-                    ctx.strokeStyle = '#38a169';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-
-                    // Update coordinate display
-                    const coordsElement = document.getElementById('position-coords');
-                    const rho = data.current.rho.toFixed(1);
-                    let displayTheta = (data.current.theta * 180 / Math.PI) % 360;
-                    if (displayTheta < 0) displayTheta += 360;
-                    const theta = displayTheta.toFixed(1);
-                    const cartX = ((data.current.x - 0.5) * 2 * 450).toFixed(1); // Convert back to mm from center
-                    const cartY = ((data.current.y - 0.5) * 2 * 450).toFixed(1);
-                    coordsElement.textContent = `ρ: ${rho}mm, θ: ${theta}°, X: ${cartX}mm, Y: ${cartY}mm`;
-                } else {
-                    document.getElementById('position-coords').textContent = 'Position: Not available';
-                }
-            }
-            
-            clearPath() {
-                this.path = [];
-            }
-
-            // ... (rest of methods)
-
 
             async getStatus() {
                 const response = await fetch(this.apiBase + '/status');
                 return await response.json();
             }
 
-            async getPosition() {
-                const response = await fetch(this.apiBase + '/position');
-                return await response.json();
-            }
-
             async startPattern() {
-                const file = document.getElementById('pattern-select').value;
+                const file = this.selectedPattern;
                 const clearing = document.getElementById('clearing-select').value;
+                if (!file) { alert('Please select a pattern'); return; }
 
-                if (!file) {
-                    alert('Please select a pattern file');
-                    return;
-                }
+                // Optimistic UI update
+                this.clearPath();
+                const stateBadge = document.getElementById('state-badge');
+                stateBadge.textContent = "STARTING...";
+                stateBadge.className = 'status-badge status-running';
 
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('clearing', clearing);
 
-                const response = await fetch(this.apiBase + '/pattern/start', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const result = await response.json();
-                if (!result.success) {
-                    alert('Error: ' + result.message);
+                try {
+                    const response = await fetch(this.apiBase + '/pattern/start', { method: 'POST', body: formData });
+                    const result = await response.json();
+                    if (!result.success) {
+                        alert('Error: ' + result.message);
+                    } else {
+                        // Force a status poll after a short delay to see the RUNNING state
+                        setTimeout(() => this.pollStatusOnce(), 200);
+                    }
+                } catch (err) {
+                    alert('Request failed');
                 }
             }
 
-            async stopPattern() {
-                await fetch(this.apiBase + '/pattern/stop', { method: 'POST' });
+            async pollStatusOnce() {
+                const status = await this.getStatus();
+                this.updateUI(status);
             }
 
-            async pausePattern() {
-                await fetch(this.apiBase + '/pattern/pause', { method: 'POST' });
-            }
-
-            async resumePattern() {
-                await fetch(this.apiBase + '/pattern/resume', { method: 'POST' });
-            }
+            async stopPattern() { await fetch(this.apiBase + '/pattern/stop', { method: 'POST' }); }
+            async pausePattern() { await fetch(this.apiBase + '/pattern/pause', { method: 'POST' }); }
 
             async homeDevice() {
-                if (!confirm('Home the device? This will reset the position to center.')) {
-                    return;
-                }
-
+                if (!confirm('Home device? This will reset position to center.')) return;
                 const response = await fetch(this.apiBase + '/home', { method: 'POST' });
                 const result = await response.json();
-
-                if (result.success) {
-                    alert('Device homed successfully');
-                } else {
-                    alert('Failed to home device: ' + (result.message || 'Unknown error'));
-                }
+                if (result.success) alert('Homed successfully');
+                else alert('Failed: ' + (result.message || 'Unknown error'));
             }
 
             async setBrightness(value) {
                 const formData = new FormData();
                 formData.append('brightness', value);
-
-                await fetch(this.apiBase + '/led/brightness', {
-                    method: 'POST',
-                    body: formData
-                });
+                await fetch(this.apiBase + '/led/brightness', { method: 'POST', body: formData });
             }
 
             async setSpeed(value) {
                 const formData = new FormData();
                 formData.append('speed', value);
-
-                await fetch(this.apiBase + '/speed', {
-                    method: 'POST',
-                    body: formData
-                });
+                await fetch(this.apiBase + '/speed', { method: 'POST', body: formData });
             }
 
             async loadFileList() {
-                const response = await fetch(this.apiBase + '/files');
-                const data = await response.json();
-
-                const select = document.getElementById('pattern-select');
-                const fileList = document.getElementById('file-list');
-
-                select.innerHTML = '<option value="">Select a pattern...</option>';
-                fileList.innerHTML = '';
-
-                if (data.files && data.files.length > 0) {
-                    data.files.forEach(file => {
-                        const option = document.createElement('option');
-                        option.value = file.name;
-                        option.textContent = file.name;
-                        select.appendChild(option);
-
-                        const fileItem = document.createElement('div');
-                        fileItem.className = 'file-item';
-                        fileItem.innerHTML = `
-                            <div class="file-info">
-                                <div class="file-name">${file.name}</div>
-                                <div class="file-size">${(file.size / 1024).toFixed(1)} KB</div>
-                            </div>
-                            <button class="btn-danger btn-small" onclick="controller.deleteFile('${file.name}')">Delete</button>
-                        `;
-                        fileList.appendChild(fileItem);
-                    });
-                } else {
-                    fileList.innerHTML = '<p style="text-align:center; color:#718096;">No pattern files found</p>';
+                try {
+                    const response = await fetch(this.apiBase + '/files');
+                    const data = await response.json();
+                    this.files = data.files || [];
+                    this.renderPatternList();
+                } catch (error) {
+                    console.error('Error loading files:', error);
                 }
             }
 
-            async deleteFile(filename) {
-                if (!confirm('Delete ' + filename + '?')) return;
-
-                const formData = new FormData();
-                formData.append('file', filename);
-
-                await fetch(this.apiBase + '/files/delete', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                await this.loadFileList();
-            }
-
-            async uploadFile(file) {
-                if (!file) return;
-
-                if (!file.name.endsWith('.thr')) {
-                    alert('Only .thr files are allowed');
+            renderPatternList() {
+                const container = document.getElementById('pattern-list-container');
+                if (this.files.length === 0) {
+                    container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">No patterns found</div>';
                     return;
                 }
 
-                const formData = new FormData();
-                formData.append('file', file);
+                container.innerHTML = this.files.map(file => {
+                    const isSelected = this.selectedPattern === file.name;
+                    const displayName = file.name.replace('.thr', '');
+                    const thumbUrl = '/api/pattern/image?file=' + encodeURIComponent(displayName);
+                    
+                    return `
+                    <div class="pattern-list-item ${isSelected ? 'selected' : ''}" data-name="${file.name}" onclick="controller.selectPattern('${file.name}')">
+                        <img src="${thumbUrl}" class="pattern-thumb" onerror="this.style.opacity=0.3" loading="lazy">
+                        <div class="pattern-info">
+                            <div class="pattern-name">${displayName}</div>
+                            <div class="pattern-size">${file.size > 0 ? Math.round(file.size / 1024) + ' KB' : ''}</div>
+                        </div>
+                    </div>`;
+                }).join('');
+            }
 
-                const uploadArea = document.getElementById('upload-area');
-                uploadArea.classList.add('loading');
-
-                try {
-                    const response = await fetch(this.apiBase + '/files/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    const result = await response.json();
-                    if (result.success) {
-                        await this.loadFileList();
-                    } else {
-                        alert('Upload failed: ' + result.message);
-                    }
-                } finally {
-                    uploadArea.classList.remove('loading');
-                }
+            selectPattern(filename) {
+                this.selectedPattern = filename;
+                const items = document.querySelectorAll('.pattern-list-item');
+                items.forEach(item => {
+                    item.classList.toggle('selected', item.getAttribute('data-name') === filename);
+                });
             }
 
             async loadSystemInfo() {
                 const response = await fetch(this.apiBase + '/system/info');
                 const data = await response.json();
-
                 document.getElementById('heap').textContent = Math.round(data.heap / 1024) + ' KB';
                 document.getElementById('wifi-ssid').textContent = data.wifi.ssid;
                 document.getElementById('wifi-ip').textContent = data.wifi.ip;
@@ -982,9 +1319,19 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 if (currentPattern !== this.lastPatternName) {
                     this.clearPath();
                     this.lastPatternName = currentPattern;
+                    
+                    // Update overlay image
+                    const img = document.getElementById('pattern-overlay');
+                    if (currentPattern !== 'None') {
+                        img.src = '/api/pattern/image?file=' + encodeURIComponent(currentPattern);
+                        img.style.display = 'block';
+                    } else {
+                        img.style.display = 'none';
+                        img.src = '';
+                    }
                 }
-                
-                document.getElementById('current-pattern').textContent = currentPattern;
+
+                document.getElementById('current-pattern').textContent = currentPattern.replace('.thr', '');
                 document.getElementById('status-brightness').textContent = status.ledBrightness;
                 document.getElementById('uptime').textContent = this.formatUptime(status.uptime);
 
@@ -999,7 +1346,6 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 const h = Math.floor(seconds / 3600);
                 const m = Math.floor((seconds % 3600) / 60);
                 const s = seconds % 60;
-
                 if (h > 0) return `${h}h ${m}m`;
                 if (m > 0) return `${m}m ${s}s`;
                 return `${s}s`;
@@ -1012,61 +1358,27 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 }, 500);
             }
 
-            startPositionPolling() {
-                this.positionInterval = setInterval(async () => {
-                    try {
-                        const position = await this.getPosition();
-                        this.drawPosition(position);
-                    } catch (error) {
-                        document.getElementById('position-coords').textContent = 'Error: ' + error.message;
-                    }
-                }, 66); // 15Hz update rate
-            }
-
             // Playlist methods
             async addToPlaylist() {
-                const file = document.getElementById('pattern-select').value;
-                const clearing = document.getElementById('clearing-select').value;
-
-                if (!file) {
-                    alert('Please select a pattern first');
-                    return;
-                }
-
+                const file = this.selectedPattern;
+                if (!file) { alert('Select a pattern first'); return; }
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('clearing', clearing);
                 formData.append('useClearing', 'true');
-
-                const response = await fetch(this.apiBase + '/playlist/add', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (response.ok) {
-                    await this.loadPlaylistStatus();
-                }
+                await fetch(this.apiBase + '/playlist/add', { method: 'POST', body: formData });
+                await this.loadPlaylistStatus();
             }
 
             async addAllToPlaylist() {
-                if (!confirm('Add all patterns to playlist? This will add all .thr files.')) return;
-
-                const response = await fetch(this.apiBase + '/playlist/addall', {
-                    method: 'POST'
-                });
-
+                if (!confirm('Add all patterns to playlist?')) return;
+                const response = await fetch(this.apiBase + '/playlist/addall', { method: 'POST' });
                 const result = await response.json();
-                if (response.ok && result.success) {
-                    alert(`Added ${result.count} patterns to playlist`);
-                    await this.loadPlaylistStatus();
-                } else {
-                    alert('Failed to add patterns');
-                }
+                if (result.success) alert(`Added ${result.count} patterns`);
+                await this.loadPlaylistStatus();
             }
 
             async clearPlaylist() {
-                if (!confirm('Clear all items from playlist?')) return;
-
+                if (!confirm('Clear playlist?')) return;
                 await fetch(this.apiBase + '/playlist/clear', { method: 'POST' });
                 await this.loadPlaylistStatus();
             }
@@ -1074,77 +1386,50 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             async startPlaylist() {
                 const response = await fetch(this.apiBase + '/playlist/start', { method: 'POST' });
                 const result = await response.json();
-
-                if (!result.success) {
-                    alert('Error: ' + result.message);
-                }
+                if (!result.success) alert('Error: ' + result.message);
             }
 
-            async stopPlaylist() {
-                await fetch(this.apiBase + '/playlist/stop', { method: 'POST' });
-            }
+            async stopPlaylist() { await fetch(this.apiBase + '/playlist/stop', { method: 'POST' }); }
+            async playlistPrev() { await fetch(this.apiBase + '/playlist/prev', { method: 'POST' }); await this.loadPlaylistStatus(); }
+            async playlistNext() { await fetch(this.apiBase + '/playlist/next', { method: 'POST' }); await this.loadPlaylistStatus(); }
 
-            async setPlaylistMode(mode) {
+            async setPlaylistLoop(enabled) {
                 const formData = new FormData();
-                formData.append('mode', mode);
-
-                await fetch(this.apiBase + '/playlist/mode', {
-                    method: 'POST',
-                    body: formData
-                });
+                formData.append('enabled', enabled ? 'true' : 'false');
+                await fetch(this.apiBase + '/playlist/loop', { method: 'POST', body: formData });
             }
 
             async setPlaylistClearing(enabled) {
                 const formData = new FormData();
                 formData.append('enabled', enabled ? 'true' : 'false');
+                await fetch(this.apiBase + '/playlist/clearing', { method: 'POST', body: formData });
+            }
 
-                await fetch(this.apiBase + '/playlist/clearing', {
-                    method: 'POST',
-                    body: formData
-                });
+            async shufflePlaylist() {
+                if (!confirm('Shuffle playlist?')) return;
+                await fetch(this.apiBase + '/playlist/shuffle', { method: 'POST' });
+                await this.loadPlaylistStatus();
             }
 
             async savePlaylist() {
                 const name = document.getElementById('playlist-name-input').value.trim();
-                if (!name) {
-                    alert('Please enter a playlist name');
-                    return;
-                }
-
+                if (!name) { alert('Enter a playlist name'); return; }
                 const formData = new FormData();
                 formData.append('name', name);
-
-                const response = await fetch(this.apiBase + '/playlist/save', {
-                    method: 'POST',
-                    body: formData
-                });
-
+                const response = await fetch(this.apiBase + '/playlist/save', { method: 'POST', body: formData });
                 const result = await response.json();
-                if (result.success) {
-                    alert('Playlist saved: ' + name);
-                } else {
-                    alert('Error saving playlist');
-                }
+                if (result.success) alert('Saved: ' + name);
             }
 
             async loadPlaylist() {
                 const name = document.getElementById('playlist-name-input').value.trim();
-                if (!name) {
-                    alert('Please enter a playlist name');
-                    return;
-                }
-
+                if (!name) { alert('Enter a playlist name'); return; }
                 const formData = new FormData();
                 formData.append('name', name);
-
-                const response = await fetch(this.apiBase + '/playlist/load', {
-                    method: 'POST',
-                    body: formData
-                });
-
+                const response = await fetch(this.apiBase + '/playlist/load', { method: 'POST', body: formData });
                 if (response.ok) {
                     await this.loadPlaylistStatus();
-                    alert('Playlist loaded: ' + name);
+                    alert('Loaded: ' + name);
                 } else {
                     alert('Playlist not found');
                 }
@@ -1154,42 +1439,67 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 const response = await fetch(this.apiBase + '/playlist');
                 const data = await response.json();
 
-                // Update mode select
-                document.getElementById('playlist-mode-select').value = data.mode;
-
-                // Update clearing toggle
+                document.getElementById('playlist-loop-toggle').checked = data.loop;
                 document.getElementById('playlist-clearing-toggle').checked = data.clearingEnabled !== false;
 
-                // Update playlist items display
-                const container = document.getElementById('playlist-items');
+                const currentIndex = data.currentIndex || 0;
+                const totalItems = data.items ? data.items.length : 0;
+                document.getElementById('playlist-progress').textContent = totalItems > 0 ? `${currentIndex + 1} / ${totalItems}` : '0 / 0';
 
+                if (data.items && data.items.length > 0 && this.lastPatternName) {
+                    document.getElementById('now-playing-name').textContent = this.lastPatternName.replace('.thr', '');
+                } else if (totalItems === 0) {
+                    document.getElementById('now-playing-name').textContent = 'No pattern playing';
+                }
+
+                const container = document.getElementById('playlist-items');
                 if (data.items && data.items.length > 0) {
-                    container.innerHTML = data.items.map((item, index) => `
-                        <div class="file-item" style="margin-bottom: 8px;">
-                            <div class="file-info">
-                                <div class="file-name">${index + 1}. ${item.filename}</div>
-                                <div class="file-size" style="font-size: 12px; color: #718096;">
-                                    ${item.clearing}${item.useClearing ? ' (with clearing)' : ' (no clearing)'}
-                                </div>
+                    container.innerHTML = data.items.map((item, index) => {
+                        const isCurrent = index === currentIndex;
+                        return `
+                        <div class="playlist-item ${isCurrent ? 'current' : ''}" onclick="controller.playlistSkipTo(${index})">
+                            <div class="playlist-num">${isCurrent ? '▶' : index + 1}</div>
+                            <div class="playlist-name">${item.filename.replace('.thr', '')}</div>
+                            <div class="playlist-actions" onclick="event.stopPropagation()">
+                                <button class="playlist-action-btn" onclick="controller.playlistMoveUp(${index})" ${index === 0 ? 'disabled' : ''}>▲</button>
+                                <button class="playlist-action-btn" onclick="controller.playlistMoveDown(${index})" ${index === data.items.length - 1 ? 'disabled' : ''}>▼</button>
+                                <button class="playlist-action-btn delete" onclick="controller.removeFromPlaylist(${index})">✕</button>
                             </div>
-                            <button class="btn-danger" style="padding: 4px 8px; font-size: 12px;"
-                                    onclick="controller.removeFromPlaylist(${index})">✕</button>
-                        </div>
-                    `).join('');
+                        </div>`;
+                    }).join('');
                 } else {
-                    container.innerHTML = '<p style="text-align:center; color:#718096;">Playlist is empty</p>';
+                    container.innerHTML = '<div class="playlist-empty">Playlist is empty</div>';
                 }
             }
 
             async removeFromPlaylist(index) {
                 const formData = new FormData();
                 formData.append('index', index);
+                await fetch(this.apiBase + '/playlist/remove', { method: 'POST', body: formData });
+                await this.loadPlaylistStatus();
+            }
 
-                await fetch(this.apiBase + '/playlist/remove', {
-                    method: 'POST',
-                    body: formData
-                });
+            async playlistSkipTo(index) {
+                const formData = new FormData();
+                formData.append('index', index);
+                await fetch(this.apiBase + '/playlist/skipto', { method: 'POST', body: formData });
+                await this.loadPlaylistStatus();
+            }
 
+            async playlistMoveUp(index) {
+                if (index <= 0) return;
+                const formData = new FormData();
+                formData.append('from', index);
+                formData.append('to', index - 1);
+                await fetch(this.apiBase + '/playlist/move', { method: 'POST', body: formData });
+                await this.loadPlaylistStatus();
+            }
+
+            async playlistMoveDown(index) {
+                const formData = new FormData();
+                formData.append('from', index);
+                formData.append('to', index + 1);
+                await fetch(this.apiBase + '/playlist/move', { method: 'POST', body: formData });
                 await this.loadPlaylistStatus();
             }
         }
