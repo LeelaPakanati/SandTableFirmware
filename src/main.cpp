@@ -2,6 +2,7 @@
 #include <SDCard.hpp>
 
 #include <WiFiManager.h>
+#include <ArduinoOTA.h>
 #include <PolarControl.hpp>
 #include <SisyphusWebServer.hpp>
 #include <LEDController.hpp>
@@ -12,6 +13,12 @@
 
 #define MOTOR_CORE 1
 #define WEB_CORE 0
+
+// Static IP configuration
+#define STATIC_IP_BASE IPAddress(100, 76, 149, 200)
+#define STATIC_GATEWAY IPAddress(100, 76, 149, 1)
+#define STATIC_SUBNET IPAddress(255, 255, 255, 0)
+#define STATIC_DNS IPAddress(100, 76, 149, 1)
 
 PolarControl polarControl;
 SisyphusWebServer webServer(80);
@@ -56,6 +63,7 @@ void webTask(void *parameter) {
     Serial.printf("Web logic task started on Core %d\n", xPortGetCoreID());
     while (true) {
         webServer.loop();
+        ArduinoOTA.handle();
         vTaskDelay(10); // Run at ~100Hz, sufficient for UI updates
     }
 }
@@ -79,6 +87,10 @@ void setup() {
     WiFiManager wm;
     wm.setConfigPortalTimeout(180);
 
+    // Configure static IP
+    wm.setSTAStaticIPConfig(STATIC_IP_BASE, STATIC_GATEWAY, STATIC_SUBNET, STATIC_DNS);
+    Serial.printf("Requesting static IP: %s\n", STATIC_IP_BASE.toString().c_str());
+
     if (!wm.autoConnect(AP_SSID, AP_PWD)) {
         Serial.println("Failed to connect to WiFi");
         ESP.restart();
@@ -89,6 +101,32 @@ void setup() {
     Serial.println(WiFi.localIP());
     Serial.print("SSID: ");
     Serial.println(WiFi.SSID());
+
+    // Setup OTA updates
+    ArduinoOTA.setHostname("sisyphus");
+    ArduinoOTA.setPassword("sandpatterns");
+    ArduinoOTA.onStart([]() {
+        String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
+        Serial.println("OTA Start: " + type);
+        // Stop motors during OTA update
+        polarControl.stop();
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\nOTA End - Rebooting...");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("OTA Progress: %u%%\r", (progress / (total / 100)));
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("OTA Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+    ArduinoOTA.begin();
+    Serial.println("OTA updates enabled");
 
     // Initialize hardware
     Serial.println("Initializing motors...");
