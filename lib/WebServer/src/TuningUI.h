@@ -417,6 +417,20 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
                     <label>Hold Delay (0-15)</label>
                     <input type="number" id="tune-rho-holdDelay" min="0" max="15">
                 </div>
+                <div class="form-group">
+                    <label>Microsteps</label>
+                    <select id="tune-rho-microsteps">
+                        <option value="1">1 (full step)</option>
+                        <option value="2">2</option>
+                        <option value="4">4</option>
+                        <option value="8">8</option>
+                        <option value="16">16</option>
+                        <option value="32">32</option>
+                        <option value="64">64</option>
+                        <option value="128">128</option>
+                        <option value="256">256</option>
+                    </select>
+                </div>
             </div>
 
             <div class="section-title">StealthChop Settings</div>
@@ -514,7 +528,7 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
         };
 
         const driverFields = [
-            'runCurrent', 'holdCurrent', 'holdDelay',
+            'runCurrent', 'holdCurrent', 'holdDelay', 'microsteps',
             'stealthChopEnabled',
             'stealthChopThreshold',
             'coolStepEnabled', 'coolStepLowerThreshold', 'coolStepUpperThreshold',
