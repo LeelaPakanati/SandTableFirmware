@@ -214,6 +214,9 @@ void MotionPlanner::calculateSegmentProfile(Segment& seg) {
     seg.rho.syncDuration = syncDuration;
     seg.rho.timeScale = (rhoTime > 0.0001) ? (syncDuration / rhoTime) : 1.0;
 
+    seg.thetaPhaseIdx = 0;
+    seg.rhoPhaseIdx = 0;
+
     seg.calculated = true;
 }
 
@@ -385,9 +388,6 @@ void MotionPlanner::start() {
         esp_timer_create(&timerArgs, (esp_timer_handle_t*)&m_timerHandle);
     }
 
-    // Start the timer
-    esp_timer_start_periodic((esp_timer_handle_t)m_timerHandle, STEP_TIMER_PERIOD_US);
-
     m_running = true;
     m_segmentStartTime = micros();
     m_segmentElapsed = 0.0;
@@ -406,6 +406,7 @@ void MotionPlanner::stop() {
     }
 
     m_running = false;
+    m_timerActive = false;
 
     // Clear step queue
     m_stepQueueHead = 0;
@@ -417,6 +418,18 @@ void MotionPlanner::process() {
 
     // Fill the step queue with upcoming step events
     fillStepQueue();
+
+    // Auto-start timer if buffer is sufficiently full
+    if (!m_timerActive) {
+        int queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
+        if (queueDepth > 64) {
+#ifndef NATIVE_BUILD
+            esp_timer_start_periodic((esp_timer_handle_t)m_timerHandle, STEP_TIMER_PERIOD_US);
+#endif
+            m_timerActive = true;
+            m_segmentStartTime = micros(); // Resync start time to actual launch
+        }
+    }
 
     // Check for segment completion
     if (m_segmentCount > 0) {
@@ -470,33 +483,42 @@ void MotionPlanner::fillStepQueue() {
     // We need to generate steps from current time to horizon
     // Sample positions at regular intervals and generate steps
 
-    static constexpr double SAMPLE_INTERVAL = 0.0001;  // 100us sampling
+    static constexpr double SAMPLE_INTERVAL = STEP_TIMER_PERIOD_US / 1000000.0;
 
     double t = segmentTime;
     double tEnd = std::min(seg.duration, segmentTime + (STEP_QUEUE_HORIZON_US / 1000000.0));
 
-    // Track expected step positions
-    static int32_t lastThetaSteps = 0;
-    static int32_t lastRhoSteps = 0;
-    static bool firstCall = true;
+    // Calculate initial position state for this batch
+    double initialThetaProfileTime = t / seg.theta.timeScale;
+    double initialRhoProfileTime = t / seg.rho.timeScale;
 
-    if (firstCall || !seg.executing) {
-        lastThetaSteps = seg.theta.startSteps;
-        lastRhoSteps = seg.rho.startSteps;
-        firstCall = false;
-    }
+    // Use a temporary phase index for the initial calculation to avoid messing up state if we don't proceed?
+    // Actually, we want to start from the current saved phase index.
+    // But `getPosition` modifies the index passed to it.
+    // If we call it here, we should update the segment's index?
+    // Yes, because `t` is increasing monotonically.
+
+    double thetaFrac = (seg.theta.profile.totalDistance > 0)
+        ? SCurve::getPosition(seg.theta.profile, initialThetaProfileTime, seg.thetaPhaseIdx) / seg.theta.profile.totalDistance
+        : 0.0;
+    double rhoFrac = (seg.rho.profile.totalDistance > 0)
+        ? SCurve::getPosition(seg.rho.profile, initialRhoProfileTime, seg.rhoPhaseIdx) / seg.rho.profile.totalDistance
+        : 0.0;
+    
+    int32_t lastThetaSteps = seg.theta.startSteps + (int32_t)(thetaFrac * seg.theta.deltaSteps);
+    int32_t lastRhoSteps = seg.rho.startSteps + (int32_t)(rhoFrac * seg.rho.deltaSteps);
 
     while (t < tEnd && getStepQueueSpace() > 2) {
         // Get position from S-curve profile (with time scaling)
         double thetaProfileTime = t / seg.theta.timeScale;
         double rhoProfileTime = t / seg.rho.timeScale;
 
-        // Get fractional position (0 to 1)
-        double thetaFrac = (seg.theta.profile.totalDistance > 0)
-            ? SCurve::getPosition(seg.theta.profile, thetaProfileTime) / seg.theta.profile.totalDistance
+        // Get fractional position (0 to 1) using stateful getPosition
+        thetaFrac = (seg.theta.profile.totalDistance > 0)
+            ? SCurve::getPosition(seg.theta.profile, thetaProfileTime, seg.thetaPhaseIdx) / seg.theta.profile.totalDistance
             : 0.0;
-        double rhoFrac = (seg.rho.profile.totalDistance > 0)
-            ? SCurve::getPosition(seg.rho.profile, rhoProfileTime) / seg.rho.profile.totalDistance
+        rhoFrac = (seg.rho.profile.totalDistance > 0)
+            ? SCurve::getPosition(seg.rho.profile, rhoProfileTime, seg.rhoPhaseIdx) / seg.rho.profile.totalDistance
             : 0.0;
 
         // Calculate target steps

@@ -179,6 +179,7 @@ private:
 
     // State
     bool m_running;
+    bool m_timerActive = false;
     bool m_endOfPattern;
     uint32_t m_completedCount;
 
