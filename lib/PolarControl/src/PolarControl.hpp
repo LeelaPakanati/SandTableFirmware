@@ -122,8 +122,8 @@ private:
   static constexpr float R_SENSE = 0.12f;  // Sense resistor in ohms
 
   // These are calculated based on current microstep settings
-  int getStepsPerMm() const { return 50 * m_rDriverSettings.microsteps; }
-  int getStepsPerRadian() const { return (int)((200.0 * m_tDriverSettings.microsteps / (2.0 * PI)) * (60.0 / 16.0)); }
+  inline int getStepsPerMm() const { return 50 * m_rDriverSettings.microsteps; }
+  inline int getStepsPerRadian() const { return (int)((200.0 * m_tDriverSettings.microsteps / (2.0 * PI)) * (60.0 / 16.0)); }
 
   // Tuning settings (runtime changeable)
   MotionSettings m_motionSettings;

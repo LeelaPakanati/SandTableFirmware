@@ -64,6 +64,24 @@ public:
     // Get acceleration at time t within the profile
     static double getAcceleration(const Profile& p, double t);
 
+    // Calculate maximum achievable entry velocity given distance, exit velocity, and limits
+    // Returns the highest vStart that can decelerate to vEnd within the given distance
+    static double maxAchievableEntryVelocity(
+        double distance,
+        double vEnd,
+        double vMax,
+        double aMax,
+        double jMax
+    );
+
+    // Calculate distance required to decelerate from vStart to vEnd
+    static double decelerationDistance(
+        double vStart,
+        double vEnd,
+        double aMax,
+        double jMax
+    );
+
 private:
     // Calculate distance covered during a jerk phase
     static double jerkPhaseDistance(double v0, double a0, double j, double t);

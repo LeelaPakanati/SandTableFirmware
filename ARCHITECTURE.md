@@ -22,8 +22,8 @@ The system is built on the ESP32 platform using the Arduino framework within Pla
 ### 2. PolarControl (`lib/PolarControl`)
 This library manages the kinematics and motor driving.
 -   **`PolarControl` Class:** The central interface for movement. Uses `std::unique_ptr` for safe management of position generators.
--   **`MotionPlanner`:** Implements S-Curve acceleration profiles. Handles coordinated movement of Theta and Rho axes.
--   **`PolarUtils`:** Centralized utility for coordinate transformations (Polar to Cartesian) and angle normalization (keeping Theta in the `[-PI, PI]` range).
+-   **`MotionPlanner`:** TODO
+-   **`PolarUtils`:** TODO
 -   **Kinematics:** 
     -   Positive Theta movement denotes clockwise rotation.
     -   Theta is normalized between patterns to the nearest equivalent value to prevent unnecessary "unwinding" rotations.
