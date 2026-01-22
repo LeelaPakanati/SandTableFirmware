@@ -8,7 +8,7 @@ The system is built on the ESP32 platform using the Arduino framework within Pla
 
 ### Core Allocation
 
--   **Core 0 (System & UI):** Handles WiFi, Web Server, OTA updates, and high-level logic (Playlists).
+-   **Core 0 (System & I/O):** Handles WiFi, Web Server, OTA updates, and **SD Card File Reading**.
 -   **Core 1 (Real-time Control):** Dedicated to the `MotorTask`, ensuring smooth, jitter-free stepper motor pulses and motion planning.
 
 ## Key Components
@@ -53,15 +53,16 @@ Handles file I/O operations.
 
 ## Data Flow
 
-1.  **Pattern Loading:**
+1.  **Pattern Loading (Async):**
     -   User selects a file via Web UI.
-    -   `SisyphusWebServer` resolves the file path and instructs `PolarControl` to load it.
-    -   `PolarControl` initializes a `FilePosGen` (wrapped in `std::unique_ptr`).
+    -   `SisyphusWebServer` calls `loadAndRunFile`.
+    -   A `CMD_LOAD` message is sent to the `FileReadTask` queue (Core 0).
+    -   `FileReadTask` opens the file and begins streaming coordinates into `m_coordQueue`.
 
 2.  **Motion Execution:**
     -   `MotorTask` (Core 1) continuously polls `PolarControl::processNextMove()`.
-    -   `PolarControl` feeds segments to `MotionPlanner`.
-    -   `MotionPlanner` calculates S-curve trajectories and generates step pulses.
+    -   `PolarControl` consumes coordinates from `m_coordQueue` (fast operation) and feeds them to `MotionPlanner`.
+    -   `MotionPlanner` calculates S-curve trajectories and generates step pulses via a 10kHz ISR.
 
 3.  **Status Feedback:**
     -   `MotorTask` updates positions.
