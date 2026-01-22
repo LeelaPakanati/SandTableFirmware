@@ -3,6 +3,10 @@
 #include <atomic>
 #include "SCurve.hpp"
 
+#ifndef NATIVE_BUILD
+#include <Arduino.h>
+#endif
+
 // IRAM_ATTR is ESP32-specific; define as empty for native builds
 #ifndef IRAM_ATTR
 #define IRAM_ATTR
@@ -121,6 +125,9 @@ public:
     // Reset completed count
     void resetCompletedCount() { m_completedCount = 0; }
 
+    // Get diagnostic info
+    void getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const;
+
 private:
     // Physical parameters
     int m_stepsPerMmR;
@@ -160,6 +167,7 @@ private:
     StepEvent m_stepQueue[STEP_QUEUE_SIZE];
     volatile int m_stepQueueHead;    // Next position to write
     volatile int m_stepQueueTail;    // Next position to read (ISR)
+    std::atomic<uint32_t> m_underrunCount{0}; // Track queue underruns
 
     // Timing
     uint32_t m_segmentStartTime;     // Microseconds when current segment started

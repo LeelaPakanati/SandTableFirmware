@@ -272,6 +272,16 @@
   1. **Logic analyzer**: Verify step pulse timing matches expectations
   2. **End-to-end**: Run patterns and observe smooth motion
   3. **Stress test**: Run clearing patterns at various speeds
+  
+  ### Diagnostics
+  Real-time telemetry has been added to the serial output (1Hz) to monitor planner health without a logic analyzer:
+  
+  ```
+  [MOTOR Core1] Position: ... | Q: 128 | UR: 0
+  ```
+  
+  - **Q (Queue Depth):** Number of steps currently in the ISR ring buffer (max 512). Should stay high (>100) during motion.
+  - **UR (Underruns):** Cumulative count of ISR buffer underruns. If this increments during motion, the CPU is too slow to generate steps in time.
 
   ## Design Decisions (Confirmed)
 

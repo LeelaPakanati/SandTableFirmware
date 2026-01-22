@@ -90,6 +90,8 @@ public:
   double getMaxRho() const { return R_MAX; }
   int getProgressPercent() const;
 
+  void getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const { m_planner.getDiagnostics(queueDepth, underruns); }
+
   // Reset theta to zero (current position becomes new origin)
   void resetTheta();
 

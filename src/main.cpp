@@ -45,9 +45,12 @@ void motorTask(void *parameter) {
             PolarCord_t pos = polarControl.getCurrentPosition();
             float loopsPerSec = (float)loopCount * 1000.0 / (now - lastPrint);
             auto state = polarControl.getState();
+            
+            uint32_t queueDepth, underruns;
+            polarControl.getDiagnostics(queueDepth, underruns);
 
-            Serial.printf("[MOTOR Core%d] Position: ρ=%.1fmm θ=%.1f° | State: %d | Loops/s: %.1f\r\n",
-                          xPortGetCoreID(), pos.rho, pos.theta * 180.0 / PI, static_cast<uint8_t>(state), loopsPerSec);
+            Serial.printf("[MOTOR Core%d] Position: ρ=%.1fmm θ=%.1f° | State: %d | Loops/s: %.1f | Q: %u | UR: %u\r\n",
+                          xPortGetCoreID(), pos.rho, pos.theta * 180.0 / PI, static_cast<uint8_t>(state), loopsPerSec, queueDepth, underruns);
 
             loopCount = 0;
             lastPrint = now;

@@ -629,6 +629,11 @@ void MotionPlanner::setEndOfPattern(bool ending) {
     m_endOfPattern = ending;
 }
 
+void MotionPlanner::getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const {
+    queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
+    underruns = m_underrunCount.load();
+}
+
 int32_t MotionPlanner::thetaToSteps(double theta) const {
     return (int32_t)(theta * m_stepsPerRadT);
 }
@@ -655,6 +660,9 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
 #ifndef NATIVE_BUILD
     // Check if there's a step event ready to execute
     if (m_stepQueueHead == m_stepQueueTail) {
+        if (m_running) {
+             m_underrunCount++;
+        }
         return;  // Queue empty
     }
 
