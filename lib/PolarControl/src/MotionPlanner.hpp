@@ -24,8 +24,8 @@
 static constexpr int SEGMENT_BUFFER_SIZE = 32;
 static constexpr int STEP_QUEUE_SIZE = 512;
 static constexpr double MIN_SEGMENT_DURATION = 0.010;  // 10ms minimum
-static constexpr uint32_t STEP_TIMER_PERIOD_US = 40;   // 25kHz ISR
-static constexpr uint32_t STEP_QUEUE_HORIZON_US = 20000;  // 20ms lookahead
+static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
+static constexpr uint32_t STEP_QUEUE_HORIZON_US = 50000;  // 50ms lookahead
 
 // Per-axis motion profile
 struct AxisProfile {
@@ -57,6 +57,10 @@ struct Segment {
 
     bool calculated;           // True if profile has been calculated
     bool executing;            // True if currently being executed
+
+    // Execution state (phase tracking)
+    int thetaPhaseIdx = 0;
+    int rhoPhaseIdx = 0;
 };
 
 // Step event for the ISR queue

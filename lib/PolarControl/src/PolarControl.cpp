@@ -14,7 +14,7 @@ PolarControl::PolarControl() {
     // Initialize default driver settings
     m_tDriverSettings.runCurrent = 1200;   // Theta motor - higher current (mA)
     m_tDriverSettings.holdCurrent = 300;
-    m_tDriverSettings.microsteps = 256;
+    m_tDriverSettings.microsteps = 64;
     m_rDriverSettings.runCurrent = 500;    // Rho motor - lower current (mA)
     m_rDriverSettings.holdCurrent = 200;
     m_rDriverSettings.microsteps = 2;
@@ -374,8 +374,9 @@ void PolarControl::forceStop() {
 void PolarControl::feedPlanner() {
     if (!m_posGen) return;
 
-    // Keep planner buffer reasonably full
-    while (m_planner.hasSpace()) {
+    // Keep planner buffer reasonably full, but don't block too long
+    int added = 0;
+    while (m_planner.hasSpace() && added < 4) {
         PolarCord_t next = m_posGen->getNextPos();
 
         if (next.isNan()) {
@@ -389,8 +390,12 @@ void PolarControl::feedPlanner() {
 
         // Add segment to planner (planner handles theta normalization internally)
         m_planner.addSegment(next.theta, next.rho);
+        added++;
     }
-    m_planner.recalculate();
+    
+    if (added > 0) {
+        m_planner.recalculate();
+    }
 }
 
 // ============================================================================
