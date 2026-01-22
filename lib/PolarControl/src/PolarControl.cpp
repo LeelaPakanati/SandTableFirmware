@@ -43,6 +43,21 @@ void PolarControl::begin() {
 
     delay(100);  // Allow drivers to initialize
 
+    // Create queues for async file reading
+    m_coordQueue = xQueueCreate(256, sizeof(PolarCord_t));
+    m_cmdQueue = xQueueCreate(5, sizeof(FileCommand));
+
+    // Create file reader task on Core 0 (System Core)
+    xTaskCreatePinnedToCore(
+        fileReadTask,
+        "FileReadTask",
+        8192,
+        this,
+        1,
+        &m_fileTaskHandle,
+        0 // Core 0
+    );
+
     // Initialize motion planner with separate axis limits
     m_planner.init(
         getStepsPerMm(),
@@ -372,28 +387,44 @@ void PolarControl::forceStop() {
 // ============================================================================
 
 void PolarControl::feedPlanner() {
-    if (!m_posGen) return;
+    // Mode 1: Generator (Testing/Clear)
+    if (m_posGen) {
+        int added = 0;
+        while (m_planner.hasSpace() && added < 4) {
+            PolarCord_t next = m_posGen->getNextPos();
 
-    // Keep planner buffer reasonably full, but don't block too long
-    int added = 0;
-    while (m_planner.hasSpace() && added < 4) {
-        PolarCord_t next = m_posGen->getNextPos();
+            if (next.isNan()) {
+                m_planner.setEndOfPattern(true);
+                break;
+            }
 
-        if (next.isNan()) {
-            // End of pattern - tell planner to decelerate to stop
-            m_planner.setEndOfPattern(true);
+            m_planner.setEndOfPattern(false);
+            m_planner.addSegment(next.theta, next.rho);
+            added++;
+        }
+        if (added > 0) m_planner.recalculate();
+        return;
+    }
+
+    // Mode 2: File Queue (Async)
+    // Consume as much as possible from the queue - popping is fast!
+    bool addedAny = false;
+    while (m_planner.hasSpace()) {
+        PolarCord_t next;
+        if (xQueueReceive(m_coordQueue, &next, 0) == pdTRUE) {
+            m_planner.setEndOfPattern(false);
+            m_planner.addSegment(next.theta, next.rho);
+            addedAny = true;
+        } else {
+            // Queue empty
+            if (!m_fileLoading) {
+                // File done and queue empty -> End of Pattern
+                m_planner.setEndOfPattern(true);
+            }
             break;
         }
-
-        // More segments coming - maintain velocity at end of buffer
-        m_planner.setEndOfPattern(false);
-
-        // Add segment to planner (planner handles theta normalization internally)
-        m_planner.addSegment(next.theta, next.rho);
-        added++;
     }
-    
-    if (added > 0) {
+    if (addedAny) {
         m_planner.recalculate();
     }
 }
@@ -939,4 +970,44 @@ String PolarControl::dumpThetaDriverSettings() {
 
 String PolarControl::dumpRhoDriverSettings() {
     return dumpDriverToJson(m_rDriver, "rho");
+}
+
+void PolarControl::fileReadTask(void* arg) {
+    PolarControl* pc = static_cast<PolarControl*>(arg);
+    FileCommand cmd;
+    std::unique_ptr<FilePosGen> fileGen;
+
+    while (true) {
+        // Check for commands (non-blocking if reading, blocking if idle)
+        if (xQueueReceive(pc->m_cmdQueue, &cmd, fileGen ? 0 : portMAX_DELAY) == pdTRUE) {
+            if (cmd.type == FileCommand::CMD_LOAD) {
+                fileGen = std_patch::make_unique<FilePosGen>(cmd.filename, cmd.maxRho);
+                pc->m_fileLoading = true;
+            } else if (cmd.type == FileCommand::CMD_STOP) {
+                fileGen.reset();
+                pc->m_fileLoading = false;
+                // Clear queue
+                PolarCord_t dummy;
+                while (xQueueReceive(pc->m_coordQueue, &dummy, 0) == pdTRUE);
+            }
+        }
+
+        if (fileGen) {
+            // Read next position
+            PolarCord_t pos = fileGen->getNextPos();
+            
+            if (pos.isNan()) {
+                // EOF
+                fileGen.reset();
+                pc->m_fileLoading = false;
+            } else {
+                // Push to queue (block if full to provide backpressure)
+                if (xQueueSend(pc->m_coordQueue, &pos, 100) != pdTRUE) {
+                    // Queue full timeout - just loop and try again (or check for stop command)
+                }
+            }
+        } else {
+            // Idle - just wait for command (handled at top of loop)
+        }
+    }
 }

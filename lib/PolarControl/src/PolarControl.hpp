@@ -119,6 +119,14 @@ public:
   String dumpRhoDriverSettings();
 
 private:
+  struct FileCommand {
+      enum Type { CMD_LOAD, CMD_STOP } type;
+      char filename[64];
+      double maxRho;
+  };
+
+  static void fileReadTask(void* arg);
+
   // Physical constants
   static constexpr double R_MAX = 450.0;
   static constexpr float R_SENSE = 0.12f;  // Sense resistor in ohms
@@ -141,6 +149,12 @@ private:
   TMC2209 m_rCDriver;
 
   SemaphoreHandle_t m_mutex = NULL;
+  
+  // Async File Reading
+  QueueHandle_t m_coordQueue = NULL;
+  QueueHandle_t m_cmdQueue = NULL;
+  TaskHandle_t m_fileTaskHandle = NULL;
+  volatile bool m_fileLoading = false;
 
   State_t m_state = UNINITIALIZED;
   std::unique_ptr<PosGen> m_posGen;
