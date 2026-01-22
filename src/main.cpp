@@ -31,7 +31,7 @@ volatile unsigned long g_motorLoopCount = 0;
 volatile unsigned long g_lastPositionPrint = 0;
 
 void motorTask(void *parameter) {
-    Serial.printf("Motor task started on Core %d\n", xPortGetCoreID());
+    Serial.printf("Motor task started on Core %d\r\n", xPortGetCoreID());
 
     unsigned long lastPrint = millis();
     unsigned long loopCount = 0;
@@ -60,7 +60,7 @@ void motorTask(void *parameter) {
 }
 
 void webTask(void *parameter) {
-    Serial.printf("Web logic task started on Core %d\n", xPortGetCoreID());
+    Serial.printf("Web logic task started on Core %d\r\n", xPortGetCoreID());
     while (true) {
         webServer.loop();
         ArduinoOTA.handle();
@@ -89,7 +89,7 @@ void setup() {
 
     // Configure static IP
     wm.setSTAStaticIPConfig(STATIC_IP_BASE, STATIC_GATEWAY, STATIC_SUBNET, STATIC_DNS);
-    Serial.printf("Requesting static IP: %s\n", STATIC_IP_BASE.toString().c_str());
+    Serial.printf("Requesting static IP: %s\r\n", STATIC_IP_BASE.toString().c_str());
 
     if (!wm.autoConnect(AP_SSID, AP_PWD)) {
         Serial.println("Failed to connect to WiFi");
@@ -172,7 +172,7 @@ void setup() {
     // Initial speed
     polarControl.setSpeed(5);
 
-    Serial.printf("Main setup done on Core %d\n", xPortGetCoreID());
+    Serial.printf("Main setup done on Core %d\r\n", xPortGetCoreID());
 }
 
 void loop() {

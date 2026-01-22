@@ -1,5 +1,5 @@
 #pragma once
-#include <TMCStepper.h>
+#include <TMC2209.h>
 #include "MotionPlanner.hpp"
 #include <PosGen.hpp>
 #include <freertos/semphr.h>
@@ -27,16 +27,25 @@ struct MotionSettings {
 };
 
 struct DriverSettings {
-  uint16_t current = 800;       // mA
-  uint8_t toff = 3;             // Chopper off-time (1-15)
-  uint8_t blankTime = 16;       // Comparator blank time (16,24,36,54)
-  bool spreadCycle = false;     // true=SpreadCycle, false=StealthChop
-  uint8_t pwmFreq = 3;          // PWM frequency (0-3)
-  uint8_t pwmReg = 2;           // PWM regulation
-  uint8_t pwmLim = 8;           // PWM limit
-  uint32_t tpwmthrs = 500;      // StealthChop threshold
-  uint8_t hystStart = 4;        // SpreadCycle hysteresis start
-  int8_t hystEnd = 0;           // SpreadCycle hysteresis end
+  // Current settings (in mA)
+  uint16_t runCurrent = 800;          // Run current in mA
+  uint16_t holdCurrent = 400;         // Hold current in mA
+  uint8_t holdDelay = 8;              // Delay before switching to hold current (0-15)
+
+  // Microstepping
+  uint16_t microsteps = 2;            // Microsteps per full step (1,2,4,8,16,32,64,128,256)
+
+  // StealthChop settings
+  bool stealthChopEnabled = true;     // true=StealthChop, false=SpreadCycle
+  uint32_t stealthChopThreshold = 0;  // Velocity threshold for StealthChop (0=always)
+
+  // CoolStep settings (current reduction at low load)
+  bool coolStepEnabled = false;       // Enable CoolStep
+  uint8_t coolStepLowerThreshold = 1; // Lower StallGuard threshold (0-15)
+  uint8_t coolStepUpperThreshold = 0; // Upper StallGuard threshold (0-15)
+  uint8_t coolStepCurrentIncrement = 0;  // Current increment (0-3: 1,2,4,8)
+  uint8_t coolStepMeasurementCount = 0;  // Measurement count (0-3: 32,8,2,1)
+  uint32_t coolStepThreshold = 0;     // Velocity threshold for CoolStep
 };
 
 class PolarControl {
@@ -98,17 +107,23 @@ public:
   bool loadTuningSettings();
 
   // Motor stress tests (blocking calls - run from main task)
-  void testThetaMotor();
-  void testRhoMotor();
+  void testThetaContinuous();
+  void testThetaStress();
+  void testRhoContinuous();
+  void testRhoStress();
+
+  // Driver diagnostics - returns JSON string with all driver register values
+  String dumpThetaDriverSettings();
+  String dumpRhoDriverSettings();
 
 private:
   // Physical constants
   static constexpr double R_MAX = 450.0;
-  static constexpr int T_MICROSTEPS = 2;
-  static constexpr int R_MICROSTEPS = 2;
+  static constexpr float R_SENSE = 0.12f;  // Sense resistor in ohms
 
-  static constexpr int STEPS_PER_MM = 50 * R_MICROSTEPS;
-  static constexpr int STEPS_PER_RADIAN = (int)((200.0 * T_MICROSTEPS / (2.0 * PI)) * (60.0 / 16.0));
+  // These are calculated based on current microstep settings
+  int getStepsPerMm() const { return 50 * m_rDriverSettings.microsteps; }
+  int getStepsPerRadian() const { return (int)((200.0 * m_tDriverSettings.microsteps / (2.0 * PI)) * (60.0 / 16.0)); }
 
   // Tuning settings (runtime changeable)
   MotionSettings m_motionSettings;
@@ -119,9 +134,9 @@ private:
   MotionPlanner m_planner;
 
   // TMC2209 drivers for configuration and homing
-  TMC2209Stepper m_tDriver;
-  TMC2209Stepper m_rDriver;
-  TMC2209Stepper m_rCDriver;
+  TMC2209 m_tDriver;
+  TMC2209 m_rDriver;
+  TMC2209 m_rCDriver;
 
   SemaphoreHandle_t m_mutex = NULL;
 
@@ -137,7 +152,7 @@ private:
   void feedPlanner();
 
   // Driver setup and homing
-  void applyDriverSettings(TMC2209Stepper &driver, const DriverSettings &settings);
-  void homeDriver(TMC2209Stepper &driver, int speed);
-  void homeDriver(TMC2209Stepper &driver);
+  void applyDriverSettings(TMC2209 &driver, const DriverSettings &settings);
+  void homeDriver(TMC2209 &driver, int speed);
+  void homeDriver(TMC2209 &driver);
 };

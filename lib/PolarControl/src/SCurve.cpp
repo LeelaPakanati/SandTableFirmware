@@ -110,6 +110,7 @@ bool SCurve::calculate(
     for (int i = 0; i < 7; i++) {
         p.t[i] = 0;
         p.tEnd[i] = 0;
+        p.posEnd[i] = 0;
     }
     for (int i = 0; i < 8; i++) {
         p.v[i] = 0;
@@ -121,7 +122,6 @@ bool SCurve::calculate(
 
     double pos = 0;
     double currentTime = 0;
-    int phase = 0;
 
     // Phase 1: Jerk+ (accelerating)
     double deltaVAccel = vCruise - vStart;
@@ -145,6 +145,7 @@ bool SCurve::calculate(
     pos += jerkPhaseDistance(p.v[0], 0, jMax, p.t[0]);
     currentTime += p.t[0];
     p.tEnd[0] = currentTime;
+    p.posEnd[0] = pos;
 
     // Phase 2
     p.v[2] = p.v[1] + p.a[1] * p.t[1];
@@ -152,6 +153,7 @@ bool SCurve::calculate(
     pos += constAccelDistance(p.v[1], p.a[1], p.t[1]);
     currentTime += p.t[1];
     p.tEnd[1] = currentTime;
+    p.posEnd[1] = pos;
 
     // Phase 3
     p.v[3] = jerkPhaseVelocity(p.v[2], p.a[2], -jMax, p.t[2]);
@@ -159,6 +161,7 @@ bool SCurve::calculate(
     pos += jerkPhaseDistance(p.v[2], p.a[2], -jMax, p.t[2]);
     currentTime += p.t[2];
     p.tEnd[2] = currentTime;
+    p.posEnd[2] = pos;
 
     // Phase 4: Cruise
     double cruiseDist = distance - pos;
@@ -179,12 +182,13 @@ bool SCurve::calculate(
         }
 
         // Estimate decel distance
-        double v5 = jerkPhaseVelocity(vCruise, 0, -jMax, t5);
-        decelDist += jerkPhaseDistance(vCruise, 0, -jMax, t5);
-        double a5 = -jMax * t5;
-        double v6 = v5 + a5 * t6;
-        decelDist += constAccelDistance(v5, a5, t6);
-        decelDist += jerkPhaseDistance(v6, a5, jMax, t7);
+        double v5_tmp = jerkPhaseVelocity(vCruise, 0, -jMax, t5);
+        double decelDist_tmp = jerkPhaseDistance(vCruise, 0, -jMax, t5);
+        double a5_tmp = -jMax * t5;
+        double v6_tmp = v5_tmp + a5_tmp * t6;
+        decelDist_tmp += constAccelDistance(v5_tmp, a5_tmp, t6);
+        decelDist_tmp += jerkPhaseDistance(v6_tmp, a5_tmp, jMax, t7);
+        decelDist = decelDist_tmp;
     } else {
         t5 = t6 = t7 = 0;
     }
@@ -198,6 +202,7 @@ bool SCurve::calculate(
     pos += cruiseDist;
     currentTime += p.t[3];
     p.tEnd[3] = currentTime;
+    p.posEnd[3] = pos;
 
     // Phase 5-7: Deceleration
     p.t[4] = t5;
@@ -207,20 +212,26 @@ bool SCurve::calculate(
     // Phase 5
     p.v[5] = jerkPhaseVelocity(p.v[4], 0, -jMax, p.t[4]);
     p.a[5] = -jMax * p.t[4];
+    pos += jerkPhaseDistance(p.v[4], 0, -jMax, p.t[4]);
     currentTime += p.t[4];
     p.tEnd[4] = currentTime;
+    p.posEnd[4] = pos;
 
     // Phase 6
     p.v[6] = p.v[5] + p.a[5] * p.t[5];
     p.a[6] = p.a[5];
+    pos += constAccelDistance(p.v[5], p.a[5], p.t[5]);
     currentTime += p.t[5];
     p.tEnd[5] = currentTime;
+    p.posEnd[5] = pos;
 
     // Phase 7
     p.v[7] = vEnd;
     p.a[7] = 0;
+    pos += jerkPhaseDistance(p.v[6], p.a[6], jMax, p.t[6]);
     currentTime += p.t[6];
     p.tEnd[6] = currentTime;
+    p.posEnd[6] = pos;
 
     p.totalTime = currentTime;
     p.totalDistance = distance;
@@ -264,60 +275,44 @@ double SCurve::getPosition(const Profile& p, double t) {
     if (t <= 0) return 0;
     if (t >= p.totalTime) return p.totalDistance;
 
-    double pos = 0;
+    // Find which phase we're in
+    int phase = 0;
+    double tPhase = t;
+    double posAtStart = 0;
 
-    // Sum completed phases
     for (int i = 0; i < 7; i++) {
-        double tStart = (i == 0) ? 0 : p.tEnd[i - 1];
         if (t <= p.tEnd[i]) {
-            // We're in this phase
-            double tPhase = t - tStart;
-            double v0 = p.v[i];
-            double a0 = p.a[i];
-            double j = 0;
-
-            switch (i) {
-                case 0: j = p.jerk; break;
-                case 1: j = 0; break;
-                case 2: j = -p.jerk; break;
-                case 3: j = 0; break;
-                case 4: j = -p.jerk; break;
-                case 5: j = 0; break;
-                case 6: j = p.jerk; break;
-            }
-
-            if (j != 0) {
-                pos += jerkPhaseDistance(v0, a0, j, tPhase);
+            phase = i;
+            if (i > 0) {
+                tPhase = t - p.tEnd[i - 1];
+                posAtStart = p.posEnd[i - 1];
             } else {
-                pos += constAccelDistance(v0, a0, tPhase);
+                tPhase = t;
+                posAtStart = 0;
             }
-            return pos;
-        }
-
-        // Add full phase distance
-        double tPhase = p.t[i];
-        double v0 = p.v[i];
-        double a0 = p.a[i];
-        double j = 0;
-
-        switch (i) {
-            case 0: j = p.jerk; break;
-            case 1: j = 0; break;
-            case 2: j = -p.jerk; break;
-            case 3: j = 0; break;
-            case 4: j = -p.jerk; break;
-            case 5: j = 0; break;
-            case 6: j = p.jerk; break;
-        }
-
-        if (j != 0) {
-            pos += jerkPhaseDistance(v0, a0, j, tPhase);
-        } else {
-            pos += constAccelDistance(v0, a0, tPhase);
+            break;
         }
     }
 
-    return pos;
+    double v0 = p.v[phase];
+    double a0 = p.a[phase];
+    double j = 0;
+
+    switch (phase) {
+        case 0: j = p.jerk; break;
+        case 1: j = 0; break;
+        case 2: j = -p.jerk; break;
+        case 3: j = 0; break;
+        case 4: j = -p.jerk; break;
+        case 5: j = 0; break;
+        case 6: j = p.jerk; break;
+    }
+
+    if (j != 0) {
+        return posAtStart + jerkPhaseDistance(v0, a0, j, tPhase);
+    } else {
+        return posAtStart + constAccelDistance(v0, a0, tPhase);
+    }
 }
 
 double SCurve::getAcceleration(const Profile& p, double t) {

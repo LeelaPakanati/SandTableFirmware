@@ -278,12 +278,31 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
         handleTuningRhoDriverSet(request);
     });
 
-    m_server.on("/api/tuning/test/theta", HTTP_POST, [this](AsyncWebServerRequest *request) {
-        handleTuningTestTheta(request);
+    m_server.on("/api/tuning/test/theta/continuous", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleTuningTestThetaContinuous(request);
     });
 
-    m_server.on("/api/tuning/test/rho", HTTP_POST, [this](AsyncWebServerRequest *request) {
-        handleTuningTestRho(request);
+    m_server.on("/api/tuning/test/theta/stress", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleTuningTestThetaStress(request);
+    });
+
+    m_server.on("/api/tuning/test/rho/continuous", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleTuningTestRhoContinuous(request);
+    });
+
+    m_server.on("/api/tuning/test/rho/stress", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleTuningTestRhoStress(request);
+    });
+
+    // Driver dump routes (for diagnostics)
+    m_server.on("/api/tuning/dump/theta", HTTP_GET, [this](AsyncWebServerRequest *request) {
+        String dump = m_polarControl->dumpThetaDriverSettings();
+        request->send(200, "application/json", dump);
+    });
+
+    m_server.on("/api/tuning/dump/rho", HTTP_GET, [this](AsyncWebServerRequest *request) {
+        String dump = m_polarControl->dumpRhoDriverSettings();
+        request->send(200, "application/json", dump);
     });
 
     // SSE for console logs
@@ -392,7 +411,7 @@ void SisyphusWebServer::processPatternQueue() {
 
     // Handle clearing completion for single pattern mode (not playlist)
     if (!m_playlistMode && m_runningClearing && m_pendingPattern.length() > 0) {
-        Serial.printf("Single pattern: Starting %s after clearing\n", m_pendingPattern.c_str());
+        Serial.printf("Single pattern: Starting %s after clearing\r\n", m_pendingPattern.c_str());
         m_polarControl->resetTheta();
         m_currentPattern = m_pendingPattern;
         m_firstPointCleared = false;
@@ -407,7 +426,7 @@ void SisyphusWebServer::processPatternQueue() {
     // Handle single pattern queue
     if (m_hasQueuedPattern) {
         if (m_singlePatternClearing && m_selectedClearing != CLEARING_NONE) {
-            Serial.printf("Single pattern: Running clearing before %s\n", m_queuedPattern.c_str());
+            Serial.printf("Single pattern: Running clearing before %s\r\n", m_queuedPattern.c_str());
             m_pendingPattern = m_queuedPattern;
             m_runningClearing = true;
             m_hasQueuedPattern = false;
@@ -1087,7 +1106,7 @@ void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
     static unsigned long lastLog = 0;
     if (millis() - lastLog > 5000) {
         lastLog = millis();
-        Serial.printf("API Position: rho=%.2f theta=%.2f\n", actualPos.rho, actualPos.theta);
+        Serial.printf("API Position: rho=%.2f theta=%.2f\r\n", actualPos.rho, actualPos.theta);
     }
 
     if (isnan(actualPos.rho) || isnan(actualPos.theta)) {
@@ -1112,6 +1131,64 @@ void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
 // Tuning Handlers
 // ============================================================================
 
+// Helper to serialize DriverSettings to JSON
+static void driverSettingsToJson(JsonObject& obj, const DriverSettings& settings) {
+    // Current settings (mA)
+    obj["runCurrent"] = settings.runCurrent;
+    obj["holdCurrent"] = settings.holdCurrent;
+    obj["holdDelay"] = settings.holdDelay;
+
+    // Microstepping
+    obj["microsteps"] = settings.microsteps;
+
+    // StealthChop settings
+    obj["stealthChopEnabled"] = settings.stealthChopEnabled;
+    obj["stealthChopThreshold"] = settings.stealthChopThreshold;
+
+    // CoolStep settings
+    obj["coolStepEnabled"] = settings.coolStepEnabled;
+    obj["coolStepLowerThreshold"] = settings.coolStepLowerThreshold;
+    obj["coolStepUpperThreshold"] = settings.coolStepUpperThreshold;
+    obj["coolStepCurrentIncrement"] = settings.coolStepCurrentIncrement;
+    obj["coolStepMeasurementCount"] = settings.coolStepMeasurementCount;
+    obj["coolStepThreshold"] = settings.coolStepThreshold;
+}
+
+// Helper to parse DriverSettings from request
+static void parseDriverSettings(AsyncWebServerRequest *request, DriverSettings& settings) {
+    // Current settings (mA)
+    if (request->hasParam("runCurrent", true))
+        settings.runCurrent = request->getParam("runCurrent", true)->value().toInt();
+    if (request->hasParam("holdCurrent", true))
+        settings.holdCurrent = request->getParam("holdCurrent", true)->value().toInt();
+    if (request->hasParam("holdDelay", true))
+        settings.holdDelay = request->getParam("holdDelay", true)->value().toInt();
+
+    // Microstepping
+    if (request->hasParam("microsteps", true))
+        settings.microsteps = request->getParam("microsteps", true)->value().toInt();
+
+    // StealthChop settings
+    if (request->hasParam("stealthChopEnabled", true))
+        settings.stealthChopEnabled = request->getParam("stealthChopEnabled", true)->value() == "true";
+    if (request->hasParam("stealthChopThreshold", true))
+        settings.stealthChopThreshold = request->getParam("stealthChopThreshold", true)->value().toInt();
+
+    // CoolStep settings
+    if (request->hasParam("coolStepEnabled", true))
+        settings.coolStepEnabled = request->getParam("coolStepEnabled", true)->value() == "true";
+    if (request->hasParam("coolStepLowerThreshold", true))
+        settings.coolStepLowerThreshold = request->getParam("coolStepLowerThreshold", true)->value().toInt();
+    if (request->hasParam("coolStepUpperThreshold", true))
+        settings.coolStepUpperThreshold = request->getParam("coolStepUpperThreshold", true)->value().toInt();
+    if (request->hasParam("coolStepCurrentIncrement", true))
+        settings.coolStepCurrentIncrement = request->getParam("coolStepCurrentIncrement", true)->value().toInt();
+    if (request->hasParam("coolStepMeasurementCount", true))
+        settings.coolStepMeasurementCount = request->getParam("coolStepMeasurementCount", true)->value().toInt();
+    if (request->hasParam("coolStepThreshold", true))
+        settings.coolStepThreshold = request->getParam("coolStepThreshold", true)->value().toInt();
+}
+
 void SisyphusWebServer::handleTuningGet(AsyncWebServerRequest *request) {
     JsonDocument doc;
 
@@ -1125,33 +1202,14 @@ void SisyphusWebServer::handleTuningGet(AsyncWebServerRequest *request) {
     motionObj["tMaxAccel"] = motion.tMaxAccel;
     motionObj["tMaxJerk"] = motion.tMaxJerk;
 
-    // Theta driver settings
+    // Driver settings
     const DriverSettings& theta = m_polarControl->getThetaDriverSettings();
     JsonObject thetaObj = doc["thetaDriver"].to<JsonObject>();
-    thetaObj["current"] = theta.current;
-    thetaObj["toff"] = theta.toff;
-    thetaObj["blankTime"] = theta.blankTime;
-    thetaObj["spreadCycle"] = theta.spreadCycle;
-    thetaObj["pwmFreq"] = theta.pwmFreq;
-    thetaObj["pwmReg"] = theta.pwmReg;
-    thetaObj["pwmLim"] = theta.pwmLim;
-    thetaObj["tpwmthrs"] = theta.tpwmthrs;
-    thetaObj["hystStart"] = theta.hystStart;
-    thetaObj["hystEnd"] = theta.hystEnd;
+    driverSettingsToJson(thetaObj, theta);
 
-    // Rho driver settings
     const DriverSettings& rho = m_polarControl->getRhoDriverSettings();
     JsonObject rhoObj = doc["rhoDriver"].to<JsonObject>();
-    rhoObj["current"] = rho.current;
-    rhoObj["toff"] = rho.toff;
-    rhoObj["blankTime"] = rho.blankTime;
-    rhoObj["spreadCycle"] = rho.spreadCycle;
-    rhoObj["pwmFreq"] = rho.pwmFreq;
-    rhoObj["pwmReg"] = rho.pwmReg;
-    rhoObj["pwmLim"] = rho.pwmLim;
-    rhoObj["tpwmthrs"] = rho.tpwmthrs;
-    rhoObj["hystStart"] = rho.hystStart;
-    rhoObj["hystEnd"] = rho.hystEnd;
+    driverSettingsToJson(rhoObj, rho);
 
     String output;
     serializeJson(doc, output);
@@ -1182,27 +1240,7 @@ void SisyphusWebServer::handleTuningMotionSet(AsyncWebServerRequest *request) {
 
 void SisyphusWebServer::handleTuningThetaDriverSet(AsyncWebServerRequest *request) {
     DriverSettings settings = m_polarControl->getThetaDriverSettings();
-
-    if (request->hasParam("current", true))
-        settings.current = request->getParam("current", true)->value().toInt();
-    if (request->hasParam("toff", true))
-        settings.toff = request->getParam("toff", true)->value().toInt();
-    if (request->hasParam("blankTime", true))
-        settings.blankTime = request->getParam("blankTime", true)->value().toInt();
-    if (request->hasParam("spreadCycle", true))
-        settings.spreadCycle = request->getParam("spreadCycle", true)->value() == "true";
-    if (request->hasParam("pwmFreq", true))
-        settings.pwmFreq = request->getParam("pwmFreq", true)->value().toInt();
-    if (request->hasParam("pwmReg", true))
-        settings.pwmReg = request->getParam("pwmReg", true)->value().toInt();
-    if (request->hasParam("pwmLim", true))
-        settings.pwmLim = request->getParam("pwmLim", true)->value().toInt();
-    if (request->hasParam("tpwmthrs", true))
-        settings.tpwmthrs = request->getParam("tpwmthrs", true)->value().toInt();
-    if (request->hasParam("hystStart", true))
-        settings.hystStart = request->getParam("hystStart", true)->value().toInt();
-    if (request->hasParam("hystEnd", true))
-        settings.hystEnd = request->getParam("hystEnd", true)->value().toInt();
+    parseDriverSettings(request, settings);
 
     m_polarControl->setThetaDriverSettings(settings);
     m_polarControl->saveTuningSettings();
@@ -1212,27 +1250,7 @@ void SisyphusWebServer::handleTuningThetaDriverSet(AsyncWebServerRequest *reques
 
 void SisyphusWebServer::handleTuningRhoDriverSet(AsyncWebServerRequest *request) {
     DriverSettings settings = m_polarControl->getRhoDriverSettings();
-
-    if (request->hasParam("current", true))
-        settings.current = request->getParam("current", true)->value().toInt();
-    if (request->hasParam("toff", true))
-        settings.toff = request->getParam("toff", true)->value().toInt();
-    if (request->hasParam("blankTime", true))
-        settings.blankTime = request->getParam("blankTime", true)->value().toInt();
-    if (request->hasParam("spreadCycle", true))
-        settings.spreadCycle = request->getParam("spreadCycle", true)->value() == "true";
-    if (request->hasParam("pwmFreq", true))
-        settings.pwmFreq = request->getParam("pwmFreq", true)->value().toInt();
-    if (request->hasParam("pwmReg", true))
-        settings.pwmReg = request->getParam("pwmReg", true)->value().toInt();
-    if (request->hasParam("pwmLim", true))
-        settings.pwmLim = request->getParam("pwmLim", true)->value().toInt();
-    if (request->hasParam("tpwmthrs", true))
-        settings.tpwmthrs = request->getParam("tpwmthrs", true)->value().toInt();
-    if (request->hasParam("hystStart", true))
-        settings.hystStart = request->getParam("hystStart", true)->value().toInt();
-    if (request->hasParam("hystEnd", true))
-        settings.hystEnd = request->getParam("hystEnd", true)->value().toInt();
+    parseDriverSettings(request, settings);
 
     m_polarControl->setRhoDriverSettings(settings);
     m_polarControl->saveTuningSettings();
@@ -1240,36 +1258,42 @@ void SisyphusWebServer::handleTuningRhoDriverSet(AsyncWebServerRequest *request)
     request->send(200, "application/json", "{\"success\":true}");
 }
 
-void SisyphusWebServer::handleTuningTestTheta(AsyncWebServerRequest *request) {
+void SisyphusWebServer::handleTuningTestThetaContinuous(AsyncWebServerRequest *request) {
     auto state = m_polarControl->getState();
-    uint8_t stateValue = static_cast<uint8_t>(state);
-
-    if (stateValue != 2) { // Not IDLE
-        request->send(409, "application/json",
-            "{\"success\":false,\"message\":\"System must be idle\"}");
+    if (state != PolarControl::IDLE) {
+        request->send(409, "application/json", "{\"success\":false,\"message\":\"System must be idle\"}");
         return;
     }
-
-    // Send response first since test is blocking
     request->send(200, "application/json", "{\"success\":true,\"message\":\"Test started\"}");
-
-    // Run the test (blocking)
-    m_polarControl->testThetaMotor();
+    m_polarControl->testThetaContinuous();
 }
 
-void SisyphusWebServer::handleTuningTestRho(AsyncWebServerRequest *request) {
+void SisyphusWebServer::handleTuningTestThetaStress(AsyncWebServerRequest *request) {
     auto state = m_polarControl->getState();
-    uint8_t stateValue = static_cast<uint8_t>(state);
-
-    if (stateValue != 2) { // Not IDLE
-        request->send(409, "application/json",
-            "{\"success\":false,\"message\":\"System must be idle\"}");
+    if (state != PolarControl::IDLE) {
+        request->send(409, "application/json", "{\"success\":false,\"message\":\"System must be idle\"}");
         return;
     }
-
-    // Send response first since test is blocking
     request->send(200, "application/json", "{\"success\":true,\"message\":\"Test started\"}");
+    m_polarControl->testThetaStress();
+}
 
-    // Run the test (blocking)
-    m_polarControl->testRhoMotor();
+void SisyphusWebServer::handleTuningTestRhoContinuous(AsyncWebServerRequest *request) {
+    auto state = m_polarControl->getState();
+    if (state != PolarControl::IDLE) {
+        request->send(409, "application/json", "{\"success\":false,\"message\":\"System must be idle\"}");
+        return;
+    }
+    request->send(200, "application/json", "{\"success\":true,\"message\":\"Test started\"}");
+    m_polarControl->testRhoContinuous();
+}
+
+void SisyphusWebServer::handleTuningTestRhoStress(AsyncWebServerRequest *request) {
+    auto state = m_polarControl->getState();
+    if (state != PolarControl::IDLE) {
+        request->send(409, "application/json", "{\"success\":false,\"message\":\"System must be idle\"}");
+        return;
+    }
+    request->send(200, "application/json", "{\"success\":true,\"message\":\"Test started\"}");
+    m_polarControl->testRhoStress();
 }

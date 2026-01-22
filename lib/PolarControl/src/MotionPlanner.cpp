@@ -3,6 +3,16 @@
 #include <Arduino.h>
 #include <cmath>
 #include <algorithm>
+#include "driver/gpio.h"
+
+// Fast GPIO macros for ESP32
+#define GPIO_SET_HIGH(pin) \
+    if (pin < 32) GPIO.out_w1ts = (1 << pin); \
+    else GPIO.out1_w1ts.val = (1 << (pin - 32))
+
+#define GPIO_SET_LOW(pin) \
+    if (pin < 32) GPIO.out_w1tc = (1 << pin); \
+    else GPIO.out1_w1tc.val = (1 << (pin - 32))
 
 MotionPlanner::MotionPlanner() {
 }
@@ -66,6 +76,7 @@ void MotionPlanner::init(
     // Clear block buffer
     m_head = m_tail = m_count = 0;
     m_completedCount = 0;
+    m_endOfPattern = false;
     for (int i = 0; i < LOOKAHEAD_SIZE; i++) {
         m_blocks[i].planned = false;
         m_blocks[i].executing = false;
@@ -76,6 +87,19 @@ void MotionPlanner::init(
 
 void MotionPlanner::setSpeedMultiplier(double mult) {
     m_speedMult = std::max(0.1, std::min(1.0, mult));
+}
+
+void MotionPlanner::setEndOfPattern(bool ending) {
+    if (m_endOfPattern == ending) return;  // No change
+
+    m_endOfPattern = ending;
+
+    // If pattern is ending and we have blocks queued, recalculate to plan deceleration
+    if (ending && m_count > 0) {
+        xSemaphoreTake(m_mutex, portMAX_DELAY);
+        recalculate();
+        xSemaphoreGive(m_mutex);
+    }
 }
 
 bool MotionPlanner::hasSpace() const {
@@ -124,15 +148,20 @@ bool MotionPlanner::addSegment(double theta, double rho) {
     block.dRho = rho - prevRho;          // mm
     block.dTheta = theta - prevTheta;    // radians
 
-    // Calculate Cartesian distance for this segment
+    // Calculate Cartesian deltas for junction direction analysis
     double x1 = prevRho * cos(prevTheta);
     double y1 = prevRho * sin(prevTheta);
     double x2 = rho * cos(theta);
     double y2 = rho * sin(theta);
-
     double dx = x2 - x1;
     double dy = y2 - y1;
-    block.distance = sqrt(dx * dx + dy * dy);
+
+    // Calculate distance for this segment
+    // For a polar machine, the path is an Archimedean spiral.
+    // We approximate the distance with the arc length.
+    double rhoAvg = (prevRho + rho) / 2.0;
+    double dTheta = theta - prevTheta;
+    block.distance = sqrt(block.dRho * block.dRho + (rhoAvg * dTheta) * (rhoAvg * dTheta));
 
     if (block.distance < 0.01) {
         block.distance = 0.01;  // Minimum distance
@@ -176,10 +205,15 @@ bool MotionPlanner::addSegment(double theta, double rho) {
     }
 
     // Store direction for junction calculation
-    if (block.distance > 0.01) {
-        m_prevDirX = dx / block.distance;
-        m_prevDirY = dy / block.distance;
+    if (block.distance > 0.001) {
+        block.unitDirX = dx / block.distance;
+        block.unitDirY = dy / block.distance;
+        m_prevDirX = block.unitDirX;
+        m_prevDirY = block.unitDirY;
         m_hasPrevDir = true;
+    } else {
+        block.unitDirX = m_prevDirX;
+        block.unitDirY = m_prevDirY;
     }
 
     // Initial velocity settings (will be refined by recalculate)
@@ -216,41 +250,8 @@ double MotionPlanner::calculateJunctionSpeed(int blockIdx) {
     double maxVel = std::min(prev.maxVelocity, curr.maxVelocity) * m_speedMult;
     double maxAcc = std::min(prev.maxAccel, curr.maxAccel);
 
-    // Calculate direction vectors
-    double prevTheta = (double)(prev.tTargetSteps - prev.tDeltaSteps) / m_stepsPerRadT;
-    double prevRho = (double)(prev.rTargetSteps - prev.rDeltaSteps) / m_stepsPerMmR;
-    double currTheta = (double)prev.tTargetSteps / m_stepsPerRadT;
-    double currRho = (double)prev.rTargetSteps / m_stepsPerMmR;
-    double nextTheta = (double)curr.tTargetSteps / m_stepsPerRadT;
-    double nextRho = (double)curr.rTargetSteps / m_stepsPerMmR;
-
-    // Convert to Cartesian
-    double x0 = prevRho * cos(prevTheta);
-    double y0 = prevRho * sin(prevTheta);
-    double x1 = currRho * cos(currTheta);
-    double y1 = currRho * sin(currTheta);
-    double x2 = nextRho * cos(nextTheta);
-    double y2 = nextRho * sin(nextTheta);
-
-    // Direction vectors
-    double dx1 = x1 - x0;
-    double dy1 = y1 - y0;
-    double d1 = sqrt(dx1 * dx1 + dy1 * dy1);
-
-    double dx2 = x2 - x1;
-    double dy2 = y2 - y1;
-    double d2 = sqrt(dx2 * dx2 + dy2 * dy2);
-
-    if (d1 < 0.001 || d2 < 0.001) {
-        return maxVel;  // Degenerate case
-    }
-
-    // Normalize
-    dx1 /= d1; dy1 /= d1;
-    dx2 /= d2; dy2 /= d2;
-
-    // Dot product gives cos of angle
-    double cosAngle = dx1 * dx2 + dy1 * dy2;
+    // Dot product of unit direction vectors gives cos of angle
+    double cosAngle = prev.unitDirX * curr.unitDirX + prev.unitDirY * curr.unitDirY;
 
     // If nearly straight, allow full speed
     if (cosAngle > 0.999) {
@@ -258,16 +259,26 @@ double MotionPlanner::calculateJunctionSpeed(int blockIdx) {
     }
 
     // If reversing or sharp corner, slow down significantly
-    if (cosAngle < -0.5) {
-        return 0.1 * maxVel;
+    if (cosAngle < -0.99) {
+        return 0;
     }
 
     // Junction velocity from centripetal acceleration
     // v² = a * r, where r ≈ deviation / (1 - cosAngle)
-    double deviation = JUNCTION_DEVIATION;
-    double radius = deviation / std::max(0.001, 1.0 - cosAngle);
+    // Actually, a more standard formula for junction speed:
+    // v = sqrt( (a * deviation * sin(theta/2)) / (1 - sin(theta/2)) )
+    // A common approximation for GRBL:
+    // v = sqrt( (a * deviation * cosTheta) / (1 - cosTheta) )
+    // Where cosTheta is the angle between segments.
+    
+    // Using the simplified GRBL-style junction velocity formula
+    double junctionSpeed = sqrt(maxAcc * JUNCTION_DEVIATION * cosAngle / (1.0 - cosAngle));
+    
+    // If cosAngle is negative, it's a sharp turn, use a small fraction of speed
+    if (cosAngle < 0) {
+        junctionSpeed = 0.1 * maxVel;
+    }
 
-    double junctionSpeed = sqrt(maxAcc * radius);
     return std::min(junctionSpeed, maxVel);
 }
 
@@ -322,9 +333,18 @@ void MotionPlanner::recalculate() {
     }
 
     // Reverse pass: ensure we can decelerate to required exit speeds
-    // Last block should decelerate to near-zero (or next junction speed)
     idx = prevIndex(m_tail);
-    double exitSpeed = 0;  // Final block exits at zero (or near-zero)
+
+    // If more segments are coming, maintain speed at end of buffer
+    // Only decelerate to zero when pattern is actually ending
+    double exitSpeed;
+    if (m_endOfPattern) {
+        exitSpeed = 0;  // Pattern ending, decelerate to stop
+    } else {
+        // More segments expected - use last block's cruise speed as exit target
+        // This allows smooth continuation when new segments are added
+        exitSpeed = m_blocks[idx].maxVelocity * m_speedMult;
+    }
 
     for (int i = m_count - 1; i >= 0; i--) {
         PlannerBlock& block = m_blocks[idx];
@@ -448,7 +468,7 @@ void MotionPlanner::startNextBlock() {
         esp_timer_start_periodic(m_stepTimer, m_stepInterval);
     }
 
-    Serial.printf("Block: dR=%ld dT=%ld dist=%.2f spd=%.1f int=%lu major=%c\n",
+    Serial.printf("Block: dR=%ld dT=%ld dist=%.2f spd=%.1f int=%lu major=%c\r\n",
         (long)block.rDeltaSteps, (long)block.tDeltaSteps, block.distance,
         speed, (unsigned long)m_stepInterval, m_rIsMajor ? 'R' : 'T');
 }
@@ -463,6 +483,7 @@ void MotionPlanner::stop() {
     m_head = m_tail = m_count = 0;
     m_completedCount = 0;
     m_executingBlock = -1;
+    m_endOfPattern = false;
 }
 
 void MotionPlanner::getCurrentPosition(double& theta, double& rho) const {
@@ -486,7 +507,7 @@ void MotionPlanner::resetTheta() {
     m_prevDirX = 0;
     m_prevDirY = 0;
 
-    Serial.printf("Theta reset to %.4f (was %.4f)\n", normalizedTheta, currentTheta);
+    Serial.printf("Theta reset to %.4f (was %.4f)\r\n", normalizedTheta, currentTheta);
 
     xSemaphoreGive(m_mutex);
 }
@@ -537,34 +558,34 @@ void IRAM_ATTR MotionPlanner::generateSteps() {
     // Generate step pulse using Bresenham
     if (m_rIsMajor) {
         // Step R axis
-        digitalWrite(m_rStepPin, HIGH);
+        GPIO_SET_HIGH(m_rStepPin);
         delayMicroseconds(2);
-        digitalWrite(m_rStepPin, LOW);
+        GPIO_SET_LOW(m_rStepPin);
         m_currentRSteps += m_rDir;
 
         // Conditionally step T axis
         m_bresenhamError -= m_bresenhamDeltaMinor;
         if (m_bresenhamError < 0) {
             m_bresenhamError += m_bresenhamDeltaMajor;
-            digitalWrite(m_tStepPin, HIGH);
+            GPIO_SET_HIGH(m_tStepPin);
             delayMicroseconds(2);
-            digitalWrite(m_tStepPin, LOW);
+            GPIO_SET_LOW(m_tStepPin);
             m_currentTSteps += m_tDir;
         }
     } else {
         // Step T axis
-        digitalWrite(m_tStepPin, HIGH);
+        GPIO_SET_HIGH(m_tStepPin);
         delayMicroseconds(2);
-        digitalWrite(m_tStepPin, LOW);
+        GPIO_SET_LOW(m_tStepPin);
         m_currentTSteps += m_tDir;
 
         // Conditionally step R axis
         m_bresenhamError -= m_bresenhamDeltaMinor;
         if (m_bresenhamError < 0) {
             m_bresenhamError += m_bresenhamDeltaMajor;
-            digitalWrite(m_rStepPin, HIGH);
+            GPIO_SET_HIGH(m_rStepPin);
             delayMicroseconds(2);
-            digitalWrite(m_rStepPin, LOW);
+            GPIO_SET_LOW(m_rStepPin);
             m_currentRSteps += m_rDir;
         }
     }
@@ -577,7 +598,10 @@ void IRAM_ATTR MotionPlanner::generateSteps() {
         uint32_t newInterval = (uint32_t)(1000000.0 / stepsPerSec);
         newInterval = std::max((uint32_t)50, std::min((uint32_t)100000, newInterval));
 
-        if (abs((int32_t)newInterval - (int32_t)m_stepInterval) > 10) {
+        // Only update timer if interval changed significantly (> 5%)
+        // or if we are nearing the end of the block
+        uint32_t diff = abs((int32_t)newInterval - (int32_t)m_stepInterval);
+        if (diff > m_stepInterval / 20 || m_stepsRemaining < 5) {
             m_stepInterval = newInterval;
             esp_timer_stop(m_stepTimer);
             esp_timer_start_periodic(m_stepTimer, m_stepInterval);

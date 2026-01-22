@@ -10,14 +10,14 @@
 // Constructor / Destructor
 // ============================================================================
 
-PolarControl::PolarControl() :
-  m_tDriver(&Serial1, 0.12f, T_ADDR),
-  m_rDriver(&Serial1, 0.12f, R_ADDR),
-  m_rCDriver(&Serial1, 0.12f, RC_ADDR)
-{
+PolarControl::PolarControl() {
   // Initialize default driver settings
-  m_tDriverSettings.current = 1200;  // Theta motor
-  m_rDriverSettings.current = 500;   // Rho motor
+  m_tDriverSettings.runCurrent = 1200;   // Theta motor - higher current (mA)
+  m_tDriverSettings.holdCurrent = 300;
+  m_tDriverSettings.microsteps = 256;
+  m_rDriverSettings.runCurrent = 500;    // Rho motor - lower current (mA)
+  m_rDriverSettings.holdCurrent = 200;
+  m_rDriverSettings.microsteps = 2;
 }
 
 PolarControl::~PolarControl() {
@@ -32,15 +32,21 @@ void PolarControl::begin() {
     m_mutex = xSemaphoreCreateMutex();
   }
 
-  Serial1.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
-
   // Load saved tuning settings (if any)
   loadTuningSettings();
 
+  // Setup TMC2209 drivers with serial connection
+  // Using ESP32 variant of setup() with alternate pins
+  m_tDriver.setup(Serial1, 115200, TMC2209::SERIAL_ADDRESS_2, RX_PIN, TX_PIN);
+  m_rDriver.setup(Serial1, 115200, TMC2209::SERIAL_ADDRESS_1, RX_PIN, TX_PIN);
+  m_rCDriver.setup(Serial1, 115200, TMC2209::SERIAL_ADDRESS_0, RX_PIN, TX_PIN);
+
+  delay(100);  // Allow drivers to initialize
+
   // Initialize motion planner with separate axis limits
   m_planner.init(
-    STEPS_PER_MM,
-    STEPS_PER_RADIAN,
+    getStepsPerMm(),
+    getStepsPerRadian(),
     R_MAX,
     // Rho limits (mm)
     m_motionSettings.rMaxVelocity,
@@ -69,16 +75,15 @@ void PolarControl::setupDrivers() {
     return;
   }
 
+  // Apply settings to all drivers
   applyDriverSettings(m_tDriver, m_tDriverSettings);
   applyDriverSettings(m_rDriver, m_rDriverSettings);
   applyDriverSettings(m_rCDriver, m_rDriverSettings);
 
-  m_rDriver.microsteps(R_MICROSTEPS);
-  m_rDriver.rms_current(m_rDriverSettings.current);
-  m_rCDriver.microsteps(R_MICROSTEPS);
-  m_rCDriver.rms_current(m_rDriverSettings.current);
-  m_tDriver.microsteps(T_MICROSTEPS);
-  m_tDriver.rms_current(m_tDriverSettings.current);
+  // Enable all drivers
+  m_tDriver.enable();
+  m_rDriver.enable();
+  m_rCDriver.enable();
 
   m_state = INITIALIZED;
 }
@@ -93,49 +98,72 @@ void PolarControl::home() {
   xSemaphoreGive(m_mutex);
 }
 
-void PolarControl::applyDriverSettings(TMC2209Stepper &driver, const DriverSettings &settings) {
-  driver.begin();
-  driver.toff(settings.toff);
-  driver.blank_time(settings.blankTime);
-  driver.en_spreadCycle(settings.spreadCycle);
+void PolarControl::applyDriverSettings(TMC2209 &driver, const DriverSettings &settings) {
+  // Set microstepping first
+  driver.setMicrostepsPerStep(settings.microsteps);
 
-  if (settings.spreadCycle) {
-    // SpreadCycle mode settings
-    driver.hysteresis_start(settings.hystStart);
-    driver.hysteresis_end(settings.hystEnd);
+  // Current settings conversion (mA to percent)
+  // Assuming 0.12ohm sense resistors -> Max RMS current ~1900mA
+  const float MAX_CURRENT_MA = 1900.0f;
+  
+  uint8_t runPercent = (uint8_t)((settings.runCurrent / MAX_CURRENT_MA) * 100.0f);
+  if (runPercent > 100) runPercent = 100;
+  
+  uint8_t holdPercent = (uint8_t)((settings.holdCurrent / MAX_CURRENT_MA) * 100.0f);
+  if (holdPercent > 100) holdPercent = 100;
+
+  driver.setRunCurrent(runPercent);
+  driver.setHoldCurrent(holdPercent);
+  
+  // Hold delay (0-15 mapped to 0-100%)
+  uint8_t delayPercent = (uint8_t)((settings.holdDelay * 100) / 15);
+  if (delayPercent > 100) delayPercent = 100;
+  driver.setHoldDelay(delayPercent);
+
+  // Use external sense resistors
+  driver.useExternalSenseResistors();
+
+  // StealthChop / SpreadCycle mode
+  if (settings.stealthChopEnabled) {
+    driver.enableStealthChop();
+    driver.setStealthChopDurationThreshold(settings.stealthChopThreshold);
+
+    driver.enableAutomaticCurrentScaling();
+    driver.enableAutomaticGradientAdaptation();
   } else {
-    // StealthChop mode settings
-    driver.pwm_autoscale(true);
-    driver.pwm_autograd(true);
-    driver.pwm_freq(settings.pwmFreq);
-    driver.pwm_reg(settings.pwmReg);
-    driver.pwm_lim(settings.pwmLim);
-    driver.TPWMTHRS(settings.tpwmthrs);
+    // SpreadCycle mode (louder but more torque at high speeds)
+    driver.disableStealthChop();
   }
 
-  driver.intpol(true);
-  driver.I_scale_analog(false);
-  driver.internal_Rsense(false);
-  driver.mstep_reg_select(true);
-  driver.pdn_disable(true);
-  driver.VACTUAL(0);
-  driver.shaft(false);
+  // CoolStep settings (reduces current at low load for efficiency)
+  if (settings.coolStepEnabled) {
+    driver.enableCoolStep(settings.coolStepLowerThreshold, settings.coolStepUpperThreshold);
+    driver.setCoolStepCurrentIncrement(static_cast<TMC2209::CurrentIncrement>(settings.coolStepCurrentIncrement));
+    driver.setCoolStepMeasurementCount(static_cast<TMC2209::MeasurementCount>(settings.coolStepMeasurementCount));
+    driver.setCoolStepDurationThreshold(settings.coolStepThreshold);
+  } else {
+    driver.disableCoolStep();
+  }
+
+  // Use step/dir interface for motion (not UART velocity mode)
+  driver.moveUsingStepDirInterface();
 }
 
-void PolarControl::homeDriver(TMC2209Stepper &driver, int speed) {
-  driver.VACTUAL(500);
+void PolarControl::homeDriver(TMC2209 &driver, int speed) {
+  // Move forward briefly
+  driver.moveAtVelocity(500);
   delay(500);
-  driver.VACTUAL(0);
-  driver.VACTUAL(speed);
+  driver.moveAtVelocity(0);
+  driver.moveAtVelocity(speed);
 
   delay(100);
-  int sg_sum = driver.SG_RESULT();
+  int sg_sum = driver.getStallGuardResult();
   int cnt = 1;
 
   while (true) {
-    int sg = driver.SG_RESULT();
+    int sg = driver.getStallGuardResult();
     if (sg <= (sg_sum / cnt) * 0.75 && cnt > 15) {
-      driver.VACTUAL(0);
+      driver.moveAtVelocity(0);
       LOG("Hit Endstop, sg=%d\r\n", sg);
       break;
     }
@@ -145,14 +173,18 @@ void PolarControl::homeDriver(TMC2209Stepper &driver, int speed) {
   }
 }
 
-void PolarControl::homeDriver(TMC2209Stepper &driver) {
+void PolarControl::homeDriver(TMC2209 &driver) {
   LOG("Preparing Homing\r\n");
   homeDriver(driver, 1000);
-  driver.shaft(!driver.shaft());
-  driver.VACTUAL(250);
+
+  // Reverse direction
+  driver.enableInverseMotorDirection();
+  driver.moveAtVelocity(250);
   delay(1000);
-  driver.VACTUAL(0);
-  driver.shaft(!driver.shaft());
+  driver.moveAtVelocity(0);
+
+  // Restore direction
+  driver.disableInverseMotorDirection();
   homeDriver(driver, 250);
 }
 
@@ -347,9 +379,13 @@ void PolarControl::feedPlanner() {
     PolarCord_t next = m_posGen->getNextPos();
 
     if (next.isNan()) {
-      // End of pattern
+      // End of pattern - tell planner to decelerate to stop
+      m_planner.setEndOfPattern(true);
       break;
     }
+
+    // More segments coming - maintain velocity at end of buffer
+    m_planner.setEndOfPattern(false);
 
     // Add segment to planner (planner handles theta normalization internally)
     m_planner.addSegment(next.theta, next.rho);
@@ -396,8 +432,8 @@ void PolarControl::setMotionSettings(const MotionSettings& settings) {
 
   // Update the motion planner with new limits
   m_planner.init(
-    STEPS_PER_MM,
-    STEPS_PER_RADIAN,
+    getStepsPerMm(),
+    getStepsPerRadian(),
     R_MAX,
     m_motionSettings.rMaxVelocity,
     m_motionSettings.rMaxAccel,
@@ -413,8 +449,20 @@ void PolarControl::setMotionSettings(const MotionSettings& settings) {
 void PolarControl::setThetaDriverSettings(const DriverSettings& settings) {
   m_tDriverSettings = settings;
   applyDriverSettings(m_tDriver, m_tDriverSettings);
-  m_tDriver.microsteps(T_MICROSTEPS);
-  m_tDriver.rms_current(m_tDriverSettings.current);
+
+  // Reinitialize planner if microsteps changed
+  m_planner.init(
+    getStepsPerMm(),
+    getStepsPerRadian(),
+    R_MAX,
+    m_motionSettings.rMaxVelocity,
+    m_motionSettings.rMaxAccel,
+    m_motionSettings.rMaxJerk,
+    m_motionSettings.tMaxVelocity,
+    m_motionSettings.tMaxAccel,
+    m_motionSettings.tMaxJerk
+  );
+
   LOG("Theta driver settings updated\r\n");
 }
 
@@ -422,10 +470,20 @@ void PolarControl::setRhoDriverSettings(const DriverSettings& settings) {
   m_rDriverSettings = settings;
   applyDriverSettings(m_rDriver, m_rDriverSettings);
   applyDriverSettings(m_rCDriver, m_rDriverSettings);
-  m_rDriver.microsteps(R_MICROSTEPS);
-  m_rDriver.rms_current(m_rDriverSettings.current);
-  m_rCDriver.microsteps(R_MICROSTEPS);
-  m_rCDriver.rms_current(m_rDriverSettings.current);
+
+  // Reinitialize planner if microsteps changed
+  m_planner.init(
+    getStepsPerMm(),
+    getStepsPerRadian(),
+    R_MAX,
+    m_motionSettings.rMaxVelocity,
+    m_motionSettings.rMaxAccel,
+    m_motionSettings.rMaxJerk,
+    m_motionSettings.tMaxVelocity,
+    m_motionSettings.tMaxAccel,
+    m_motionSettings.tMaxJerk
+  );
+
   LOG("Rho driver settings updated\r\n");
 }
 
@@ -434,6 +492,29 @@ void PolarControl::setRhoDriverSettings(const DriverSettings& settings) {
 // ============================================================================
 
 static const char* TUNING_FILE = "/tuning.json";
+
+// Helper to save driver settings to JSON object
+static void saveDriverSettingsToJson(JsonObject& obj, const DriverSettings& settings) {
+  // Current settings (mA)
+  obj["runCurrent"] = settings.runCurrent;
+  obj["holdCurrent"] = settings.holdCurrent;
+  obj["holdDelay"] = settings.holdDelay;
+
+  // Microstepping
+  obj["microsteps"] = settings.microsteps;
+
+  // StealthChop settings
+  obj["stealthChopEnabled"] = settings.stealthChopEnabled;
+  obj["stealthChopThreshold"] = settings.stealthChopThreshold;
+
+  // CoolStep settings
+  obj["coolStepEnabled"] = settings.coolStepEnabled;
+  obj["coolStepLowerThreshold"] = settings.coolStepLowerThreshold;
+  obj["coolStepUpperThreshold"] = settings.coolStepUpperThreshold;
+  obj["coolStepCurrentIncrement"] = settings.coolStepCurrentIncrement;
+  obj["coolStepMeasurementCount"] = settings.coolStepMeasurementCount;
+  obj["coolStepThreshold"] = settings.coolStepThreshold;
+}
 
 bool PolarControl::saveTuningSettings() {
   JsonDocument doc;
@@ -447,31 +528,12 @@ bool PolarControl::saveTuningSettings() {
   motion["tMaxAccel"] = m_motionSettings.tMaxAccel;
   motion["tMaxJerk"] = m_motionSettings.tMaxJerk;
 
-  // Theta driver settings
+  // Driver settings
   JsonObject theta = doc["thetaDriver"].to<JsonObject>();
-  theta["current"] = m_tDriverSettings.current;
-  theta["toff"] = m_tDriverSettings.toff;
-  theta["blankTime"] = m_tDriverSettings.blankTime;
-  theta["spreadCycle"] = m_tDriverSettings.spreadCycle;
-  theta["pwmFreq"] = m_tDriverSettings.pwmFreq;
-  theta["pwmReg"] = m_tDriverSettings.pwmReg;
-  theta["pwmLim"] = m_tDriverSettings.pwmLim;
-  theta["tpwmthrs"] = m_tDriverSettings.tpwmthrs;
-  theta["hystStart"] = m_tDriverSettings.hystStart;
-  theta["hystEnd"] = m_tDriverSettings.hystEnd;
+  saveDriverSettingsToJson(theta, m_tDriverSettings);
 
-  // Rho driver settings
   JsonObject rho = doc["rhoDriver"].to<JsonObject>();
-  rho["current"] = m_rDriverSettings.current;
-  rho["toff"] = m_rDriverSettings.toff;
-  rho["blankTime"] = m_rDriverSettings.blankTime;
-  rho["spreadCycle"] = m_rDriverSettings.spreadCycle;
-  rho["pwmFreq"] = m_rDriverSettings.pwmFreq;
-  rho["pwmReg"] = m_rDriverSettings.pwmReg;
-  rho["pwmLim"] = m_rDriverSettings.pwmLim;
-  rho["tpwmthrs"] = m_rDriverSettings.tpwmthrs;
-  rho["hystStart"] = m_rDriverSettings.hystStart;
-  rho["hystEnd"] = m_rDriverSettings.hystEnd;
+  saveDriverSettingsToJson(rho, m_rDriverSettings);
 
   // Write to file
   File file = SD.open(TUNING_FILE, FILE_WRITE);
@@ -484,6 +546,29 @@ bool PolarControl::saveTuningSettings() {
   file.close();
   LOG("Tuning settings saved to %s\r\n", TUNING_FILE);
   return true;
+}
+
+// Helper to load driver settings from JSON object
+static void loadDriverSettingsFromJson(JsonObject& obj, DriverSettings& settings) {
+  // Current settings (mA)
+  settings.runCurrent = obj["runCurrent"] | settings.runCurrent;
+  settings.holdCurrent = obj["holdCurrent"] | settings.holdCurrent;
+  settings.holdDelay = obj["holdDelay"] | settings.holdDelay;
+
+  // Microstepping
+  settings.microsteps = obj["microsteps"] | settings.microsteps;
+
+  // StealthChop settings
+  settings.stealthChopEnabled = obj["stealthChopEnabled"] | settings.stealthChopEnabled;
+  settings.stealthChopThreshold = obj["stealthChopThreshold"] | settings.stealthChopThreshold;
+
+  // CoolStep settings
+  settings.coolStepEnabled = obj["coolStepEnabled"] | settings.coolStepEnabled;
+  settings.coolStepLowerThreshold = obj["coolStepLowerThreshold"] | settings.coolStepLowerThreshold;
+  settings.coolStepUpperThreshold = obj["coolStepUpperThreshold"] | settings.coolStepUpperThreshold;
+  settings.coolStepCurrentIncrement = obj["coolStepCurrentIncrement"] | settings.coolStepCurrentIncrement;
+  settings.coolStepMeasurementCount = obj["coolStepMeasurementCount"] | settings.coolStepMeasurementCount;
+  settings.coolStepThreshold = obj["coolStepThreshold"] | settings.coolStepThreshold;
 }
 
 bool PolarControl::loadTuningSettings() {
@@ -518,34 +603,15 @@ bool PolarControl::loadTuningSettings() {
     m_motionSettings.tMaxJerk = motion["tMaxJerk"] | m_motionSettings.tMaxJerk;
   }
 
-  // Theta driver settings
+  // Driver settings
   if (doc["thetaDriver"].is<JsonObject>()) {
     JsonObject theta = doc["thetaDriver"];
-    m_tDriverSettings.current = theta["current"] | m_tDriverSettings.current;
-    m_tDriverSettings.toff = theta["toff"] | m_tDriverSettings.toff;
-    m_tDriverSettings.blankTime = theta["blankTime"] | m_tDriverSettings.blankTime;
-    m_tDriverSettings.spreadCycle = theta["spreadCycle"] | m_tDriverSettings.spreadCycle;
-    m_tDriverSettings.pwmFreq = theta["pwmFreq"] | m_tDriverSettings.pwmFreq;
-    m_tDriverSettings.pwmReg = theta["pwmReg"] | m_tDriverSettings.pwmReg;
-    m_tDriverSettings.pwmLim = theta["pwmLim"] | m_tDriverSettings.pwmLim;
-    m_tDriverSettings.tpwmthrs = theta["tpwmthrs"] | m_tDriverSettings.tpwmthrs;
-    m_tDriverSettings.hystStart = theta["hystStart"] | m_tDriverSettings.hystStart;
-    m_tDriverSettings.hystEnd = theta["hystEnd"] | m_tDriverSettings.hystEnd;
+    loadDriverSettingsFromJson(theta, m_tDriverSettings);
   }
 
-  // Rho driver settings
   if (doc["rhoDriver"].is<JsonObject>()) {
     JsonObject rho = doc["rhoDriver"];
-    m_rDriverSettings.current = rho["current"] | m_rDriverSettings.current;
-    m_rDriverSettings.toff = rho["toff"] | m_rDriverSettings.toff;
-    m_rDriverSettings.blankTime = rho["blankTime"] | m_rDriverSettings.blankTime;
-    m_rDriverSettings.spreadCycle = rho["spreadCycle"] | m_rDriverSettings.spreadCycle;
-    m_rDriverSettings.pwmFreq = rho["pwmFreq"] | m_rDriverSettings.pwmFreq;
-    m_rDriverSettings.pwmReg = rho["pwmReg"] | m_rDriverSettings.pwmReg;
-    m_rDriverSettings.pwmLim = rho["pwmLim"] | m_rDriverSettings.pwmLim;
-    m_rDriverSettings.tpwmthrs = rho["tpwmthrs"] | m_rDriverSettings.tpwmthrs;
-    m_rDriverSettings.hystStart = rho["hystStart"] | m_rDriverSettings.hystStart;
-    m_rDriverSettings.hystEnd = rho["hystEnd"] | m_rDriverSettings.hystEnd;
+    loadDriverSettingsFromJson(rho, m_rDriverSettings);
   }
 
   LOG("Tuning settings loaded from %s\r\n", TUNING_FILE);
@@ -556,22 +622,45 @@ bool PolarControl::loadTuningSettings() {
 // Motor Stress Tests (using Motion Planner)
 // ============================================================================
 
-// Test pattern generator for theta motor
-class TestThetaPosGen : public PosGen {
+class TestThetaContinuousGen : public PosGen {
 public:
-  TestThetaPosGen(double fixedRho) : m_rho(fixedRho), m_phase(0), m_step(0) {}
+  TestThetaContinuousGen(double fixedRho) : m_rho(fixedRho), m_phase(0) {}
 
   PolarCord_t getNextPos() override {
-    // Phase 0: Rotate 5 full turns forward
-    // Phase 1: Rotate 5 full turns back
-    // Phase 2: Varying size moves (0.5° to 90°)
-    // Phase 3: Random quick reversals
+    // Phase 0: Rotate 5 full turns forward in one go
+    // Phase 1: Rotate 5 full turns back in one go
 
-    const double STEP_SIZE = PI;  // radians per point
     const double FULL_ROTATION = 2.0 * PI;
     const int ROTATIONS = 5;
-    const double DEGREES_TO_RADIANS = PI / 180.0;
 
+    if (m_phase == 0) {
+      m_phase = 1;
+      return {0, m_rho};
+    }
+
+    if (m_phase == 1) {
+      m_phase = 2;
+      return {FULL_ROTATION * ROTATIONS, m_rho};
+    }
+
+    if (m_phase == 2) {
+      m_phase = 3;
+      return {0, m_rho};
+    }
+    return {std::nan(""), std::nan("")};
+  }
+private:
+  double m_rho;
+  int m_phase;
+};
+
+class TestThetaStressGen : public PosGen {
+public:
+  TestThetaStressGen(double fixedRho) : m_rho(fixedRho), m_phase(0), m_step(0) {}
+
+  PolarCord_t getNextPos() override {
+    const double DEGREES_TO_RADIANS = PI / 180.0;
+    
     // Varying move sizes in degrees
     static const double MOVE_SIZES[] = {
       0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0, 90.0,
@@ -580,35 +669,9 @@ public:
     static const int NUM_MOVE_SIZES = sizeof(MOVE_SIZES) / sizeof(MOVE_SIZES[0]);
 
     if (m_phase == 0) {
-      // Forward rotation
-      double theta = m_step * STEP_SIZE;
-      if (theta >= FULL_ROTATION * ROTATIONS) {
-        m_phase = 1;
-        m_step = 0;
-        m_baseTheta = FULL_ROTATION * ROTATIONS;
-      } else {
-        m_step++;
-        return {theta, m_rho};
-      }
-    }
-
-    if (m_phase == 1) {
-      // Reverse rotation back to start
-      double theta = m_baseTheta - m_step * STEP_SIZE;
-      if (theta <= 0) {
-        m_phase = 2;
-        m_step = 0;
-        m_currentTheta = 0;
-      } else {
-        m_step++;
-        return {theta, m_rho};
-      }
-    }
-
-    if (m_phase == 2) {
       // Varying size moves - go out and back for each size
       if (m_step >= NUM_MOVE_SIZES * 2) {
-        m_phase = 3;
+        m_phase = 1;
         m_step = 0;
         m_currentTheta = 0;
       } else {
@@ -626,13 +689,13 @@ public:
       }
     }
 
-    if (m_phase == 3) {
+    if (m_phase == 1) {
       // Quick random-ish reversals at different amplitudes
       static const double QUICK_SIZES[] = {5.0, 45.0, 2.0, 90.0, 10.0, 30.0, 1.0, 60.0, 15.0, 0.5};
       static const int NUM_QUICK = sizeof(QUICK_SIZES) / sizeof(QUICK_SIZES[0]);
 
       if (m_step >= NUM_QUICK * 2) {
-        return {std::nan(""), std::nan("")};  // Done
+        return {std::nan(""), std::nan("")};
       }
 
       int sizeIdx = m_step / 2;
@@ -647,34 +710,56 @@ public:
       m_step++;
       return {m_currentTheta, m_rho};
     }
-
     return {std::nan(""), std::nan("")};
   }
-
 private:
   double m_rho;
-  double m_baseTheta = 0;
   double m_currentTheta = 0;
   int m_phase;
   int m_step;
 };
 
-// Test pattern generator for rho motor
-class TestRhoPosGen : public PosGen {
+class TestRhoContinuousGen : public PosGen {
 public:
-  TestRhoPosGen(double maxRho) : m_maxRho(maxRho), m_phase(0), m_step(0) {}
+  TestRhoContinuousGen(double maxRho) : m_maxRho(maxRho), m_phase(0) {}
 
   PolarCord_t getNextPos() override {
-    // Phase 0: Move from center to max
-    // Phase 1: Move from max to near-zero
-    // Phase 2: Move back to center
-    // Phase 3: Varying size moves (1mm to 100mm)
-    // Phase 4: Quick random-ish reversals
-
-    const double STEP_SIZE = 5.0;  // mm per point
     const double CENTER = m_maxRho / 2;
     const double MIN_RHO = 20.0;
 
+    if (m_phase == 0) {
+      // Move outward to max in one go
+      m_phase = 1;
+      return {0, m_maxRho};
+    }
+
+    if (m_phase == 1) {
+      // Move inward to min in one go
+      m_phase = 2;
+      return {0, MIN_RHO};
+    }
+
+    if (m_phase == 2) {
+      // Move back to center in one go
+      m_phase = 3;
+      return {0, CENTER};
+    }
+    return {std::nan(""), std::nan("")};
+  }
+private:
+  double m_maxRho;
+  int m_phase;
+};
+
+class TestRhoStressGen : public PosGen {
+public:
+  TestRhoStressGen(double maxRho) : m_maxRho(maxRho), m_phase(0), m_step(0) {
+    m_currentRho = maxRho / 2;
+  }
+
+  PolarCord_t getNextPos() override {
+    const double CENTER = m_maxRho / 2;
+    
     // Varying move sizes in mm
     static const double MOVE_SIZES[] = {
       1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 50.0, 75.0, 100.0,
@@ -683,48 +768,10 @@ public:
     static const int NUM_MOVE_SIZES = sizeof(MOVE_SIZES) / sizeof(MOVE_SIZES[0]);
 
     if (m_phase == 0) {
-      // Move outward from center to max
-      double rho = CENTER + m_step * STEP_SIZE;
-      if (rho >= m_maxRho) {
-        m_phase = 1;
-        m_step = 0;
-      } else {
-        m_step++;
-        return {0, rho};
-      }
-    }
-
-    if (m_phase == 1) {
-      // Move inward from max to min
-      double rho = m_maxRho - m_step * STEP_SIZE;
-      if (rho <= MIN_RHO) {
-        m_phase = 2;
-        m_step = 0;
-      } else {
-        m_step++;
-        return {0, rho};
-      }
-    }
-
-    if (m_phase == 2) {
-      // Move back to center
-      double rho = MIN_RHO + m_step * STEP_SIZE;
-      if (rho >= CENTER) {
-        m_phase = 3;
-        m_step = 0;
-        m_currentRho = CENTER;
-      } else {
-        m_step++;
-        return {0, rho};
-      }
-    }
-
-    if (m_phase == 3) {
       // Varying size moves - go out and back for each size
       if (m_step >= NUM_MOVE_SIZES * 2) {
-        m_phase = 4;
+        m_phase = 1;
         m_step = 0;
-        m_currentRho = CENTER;
       } else {
         int sizeIdx = m_step / 2;
         bool goingOut = (m_step % 2 == 0);
@@ -740,7 +787,7 @@ public:
       }
     }
 
-    if (m_phase == 4) {
+    if (m_phase == 1) {
       // Quick random-ish reversals at different amplitudes
       static const double QUICK_SIZES[] = {10.0, 50.0, 5.0, 100.0, 20.0, 75.0, 2.0, 30.0, 1.0, 60.0};
       static const int NUM_QUICK = sizeof(QUICK_SIZES) / sizeof(QUICK_SIZES[0]);
@@ -761,54 +808,129 @@ public:
       m_step++;
       return {0, m_currentRho};
     }
-
     return {std::nan(""), std::nan("")};
   }
-
 private:
   double m_maxRho;
-  double m_currentRho = 0;
+  double m_currentRho;
   int m_phase;
   int m_step;
 };
 
-void PolarControl::testThetaMotor() {
-  if (m_state != IDLE) {
-    LOG("Cannot test: not IDLE\r\n");
-    return;
-  }
-
-  LOG("Starting theta motor test via motion planner...\r\n");
-
-  // Get current rho position to hold it constant
+void PolarControl::testThetaContinuous() {
+  if (m_state != IDLE) return;
+  LOG("Starting theta continuous test...\r\n");
+  
   double currentTheta, currentRho;
   m_planner.getCurrentPosition(currentTheta, currentRho);
-
-  // Use a safe rho position (middle of range)
   double testRho = (currentRho > 50 && currentRho < R_MAX - 50) ? currentRho : R_MAX / 2;
-
-  // Reset theta to 0 for clean test
+  
   resetTheta();
-
-  // Create and start the test pattern
-  start(std_patch::make_unique<TestThetaPosGen>(testRho));
-
-  LOG("Theta test pattern started\r\n");
+  start(std_patch::make_unique<TestThetaContinuousGen>(testRho));
 }
 
-void PolarControl::testRhoMotor() {
-  if (m_state != IDLE) {
-    LOG("Cannot test: not IDLE\r\n");
-    return;
+void PolarControl::testThetaStress() {
+  if (m_state != IDLE) return;
+  LOG("Starting theta stress test...\r\n");
+  
+  double currentTheta, currentRho;
+  m_planner.getCurrentPosition(currentTheta, currentRho);
+  double testRho = (currentRho > 50 && currentRho < R_MAX - 50) ? currentRho : R_MAX / 2;
+  
+  resetTheta();
+  start(std_patch::make_unique<TestThetaStressGen>(testRho));
+}
+
+void PolarControl::testRhoContinuous() {
+  if (m_state != IDLE) return;
+  LOG("Starting rho continuous test...\r\n");
+  resetTheta();
+  start(std_patch::make_unique<TestRhoContinuousGen>(R_MAX));
+}
+
+void PolarControl::testRhoStress() {
+  if (m_state != IDLE) return;
+  LOG("Starting rho stress test...\r\n");
+  resetTheta();
+  start(std_patch::make_unique<TestRhoStressGen>(R_MAX));
+}
+
+// ============================================================================
+// Driver Diagnostics
+// ============================================================================
+
+// Helper to dump driver info to JSON
+static String dumpDriverToJson(TMC2209& driver, const char* name) {
+  JsonDocument doc;
+
+  doc["name"] = name;
+  doc["communicating"] = driver.isCommunicating();
+  doc["setupOk"] = driver.isSetupAndCommunicating();
+
+  if (driver.isCommunicating()) {
+    // Get settings from driver
+    TMC2209::Settings settings = driver.getSettings();
+    JsonObject settingsObj = doc["settings"].to<JsonObject>();
+    settingsObj["softwareEnabled"] = settings.software_enabled;
+    settingsObj["microstepsPerStep"] = settings.microsteps_per_step;
+    settingsObj["inverseMotorDirection"] = settings.inverse_motor_direction_enabled;
+    settingsObj["stealthChopEnabled"] = settings.stealth_chop_enabled;
+    settingsObj["standstillMode"] = settings.standstill_mode;
+    settingsObj["irunPercent"] = settings.irun_percent;
+    settingsObj["irunRegister"] = settings.irun_register_value;
+    settingsObj["iholdPercent"] = settings.ihold_percent;
+    settingsObj["iholdRegister"] = settings.ihold_register_value;
+    settingsObj["iholdDelayPercent"] = settings.iholddelay_percent;
+    settingsObj["iholdDelayRegister"] = settings.iholddelay_register_value;
+    settingsObj["coolStepEnabled"] = settings.cool_step_enabled;
+    settingsObj["analogCurrentScaling"] = settings.analog_current_scaling_enabled;
+    settingsObj["internalSenseResistors"] = settings.internal_sense_resistors_enabled;
+
+    // Get status from driver
+    TMC2209::Status status = driver.getStatus();
+    JsonObject statusObj = doc["status"].to<JsonObject>();
+    statusObj["overTempWarning"] = (bool)status.over_temperature_warning;
+    statusObj["overTempShutdown"] = (bool)status.over_temperature_shutdown;
+    statusObj["shortToGroundA"] = (bool)status.short_to_ground_a;
+    statusObj["shortToGroundB"] = (bool)status.short_to_ground_b;
+    statusObj["lowSideShortA"] = (bool)status.low_side_short_a;
+    statusObj["lowSideShortB"] = (bool)status.low_side_short_b;
+    statusObj["openLoadA"] = (bool)status.open_load_a;
+    statusObj["openLoadB"] = (bool)status.open_load_b;
+    statusObj["overTemp120c"] = (bool)status.over_temperature_120c;
+    statusObj["overTemp143c"] = (bool)status.over_temperature_143c;
+    statusObj["overTemp150c"] = (bool)status.over_temperature_150c;
+    statusObj["overTemp157c"] = (bool)status.over_temperature_157c;
+    statusObj["currentScaling"] = status.current_scaling;
+    statusObj["stealthChopMode"] = (bool)status.stealth_chop_mode;
+    statusObj["standstill"] = (bool)status.standstill;
+
+    // Get global status
+    TMC2209::GlobalStatus gstatus = driver.getGlobalStatus();
+    JsonObject globalObj = doc["globalStatus"].to<JsonObject>();
+    globalObj["reset"] = (bool)gstatus.reset;
+    globalObj["drvErr"] = (bool)gstatus.drv_err;
+    globalObj["uvCp"] = (bool)gstatus.uv_cp;
+
+    // Get dynamic values
+    JsonObject dynamicObj = doc["dynamic"].to<JsonObject>();
+    dynamicObj["stallGuardResult"] = driver.getStallGuardResult();
+    dynamicObj["pwmScaleSum"] = driver.getPwmScaleSum();
+    dynamicObj["pwmScaleAuto"] = driver.getPwmScaleAuto();
+    dynamicObj["pwmOffsetAuto"] = driver.getPwmOffsetAuto();
+    dynamicObj["pwmGradientAuto"] = driver.getPwmGradientAuto();
+    dynamicObj["microstepCounter"] = driver.getMicrostepCounter();
   }
 
-  LOG("Starting rho motor test via motion planner...\r\n");
+  String output;
+  serializeJsonPretty(doc, output);
+  return output;
+}
 
-  // Reset theta to 0 for clean test
-  resetTheta();
+String PolarControl::dumpThetaDriverSettings() {
+  return dumpDriverToJson(m_tDriver, "theta");
+}
 
-  // Create and start the test pattern
-  start(std_patch::make_unique<TestRhoPosGen>(R_MAX));
-
-  LOG("Rho test pattern started\r\n");
+String PolarControl::dumpRhoDriverSettings() {
+  return dumpDriverToJson(m_rDriver, "rho");
 }

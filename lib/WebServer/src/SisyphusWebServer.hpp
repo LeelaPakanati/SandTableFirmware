@@ -82,8 +82,10 @@ private:
     void handleTuningMotionSet(AsyncWebServerRequest *request);
     void handleTuningThetaDriverSet(AsyncWebServerRequest *request);
     void handleTuningRhoDriverSet(AsyncWebServerRequest *request);
-    void handleTuningTestTheta(AsyncWebServerRequest *request);
-    void handleTuningTestRho(AsyncWebServerRequest *request);
+    void handleTuningTestThetaContinuous(AsyncWebServerRequest *request);
+    void handleTuningTestThetaStress(AsyncWebServerRequest *request);
+    void handleTuningTestRhoContinuous(AsyncWebServerRequest *request);
+    void handleTuningTestRhoStress(AsyncWebServerRequest *request);
 
     // Helper methods
     void processPatternQueue();

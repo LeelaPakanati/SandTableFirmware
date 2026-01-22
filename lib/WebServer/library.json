@@ -2,7 +2,7 @@
     "name": "WebServer",
     "version": "1.0.0",
     "dependencies": {
-        "TMCStepper": "*",
+        "TMC2209": "*",
         "MultiStepperLite": "*"
     }
 }

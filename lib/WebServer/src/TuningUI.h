@@ -37,12 +37,9 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
             color: var(--text-primary);
         }
 
-        .container { max-width: 800px; margin: 0 auto; }
+        .container { max-width: 900px; margin: 0 auto; }
 
-        .header {
-            text-align: center;
-            margin-bottom: 32px;
-        }
+        .header { text-align: center; margin-bottom: 32px; }
 
         .logo {
             font-size: 2.5em;
@@ -135,28 +132,30 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
 
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 12px;
             margin-bottom: 16px;
         }
 
-        .form-group {
-            margin-bottom: 0;
+        .grid-2 {
+            grid-template-columns: repeat(2, 1fr);
         }
+
+        .form-group { margin-bottom: 0; }
 
         label {
             display: block;
             margin-bottom: 6px;
-            font-size: 0.8em;
+            font-size: 0.75em;
             color: var(--text-secondary);
         }
 
         input[type="number"], select {
             width: 100%;
-            padding: 12px;
+            padding: 10px;
             border: 1px solid var(--border);
             border-radius: 10px;
-            font-size: 0.95em;
+            font-size: 0.9em;
             background: #1a1a2e;
             color: var(--text-primary);
             transition: border-color 0.2s;
@@ -218,24 +217,40 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
             color: #000;
         }
 
-        .btn-test-theta:hover {
-            background: #6ee7a0;
-        }
+        .btn-test-theta:hover { background: #6ee7a0; }
 
         .btn-test-rho {
             background: var(--warning);
             color: #000;
         }
 
-        .btn-test-rho:hover {
-            background: #fcd34d;
-        }
+        .btn-test-rho:hover { background: #fcd34d; }
 
         .test-description {
             font-size: 0.85em;
             color: var(--text-muted);
             margin-bottom: 16px;
             line-height: 1.5;
+        }
+
+        .dump-output {
+            background: #0a0a12;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            font-family: monospace;
+            font-size: 0.8em;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            color: var(--text-secondary);
+            margin-top: 12px;
+        }
+
+        .dump-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
         }
 
         ::-webkit-scrollbar { width: 6px; }
@@ -270,11 +285,11 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
                     <input type="number" id="tune-rMaxVelocity" step="0.1">
                 </div>
                 <div class="form-group">
-                    <label>Rho Max Accel (mm/s²)</label>
+                    <label>Rho Max Accel (mm/s2)</label>
                     <input type="number" id="tune-rMaxAccel" step="0.1">
                 </div>
                 <div class="form-group">
-                    <label>Rho Max Jerk (mm/s³)</label>
+                    <label>Rho Max Jerk (mm/s3)</label>
                     <input type="number" id="tune-rMaxJerk" step="1">
                 </div>
                 <div class="form-group">
@@ -282,11 +297,11 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
                     <input type="number" id="tune-tMaxVelocity" step="0.1">
                 </div>
                 <div class="form-group">
-                    <label>Theta Max Accel (rad/s²)</label>
+                    <label>Theta Max Accel (rad/s2)</label>
                     <input type="number" id="tune-tMaxAccel" step="0.1">
                 </div>
                 <div class="form-group">
-                    <label>Theta Max Jerk (rad/s³)</label>
+                    <label>Theta Max Jerk (rad/s3)</label>
                     <input type="number" id="tune-tMaxJerk" step="1">
                 </div>
             </div>
@@ -295,89 +310,171 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
 
         <div class="card">
             <div class="card-title">Theta Driver</div>
+
+            <div class="section-title">Current &amp; Microstepping</div>
             <div class="grid">
                 <div class="form-group">
-                    <label>Current (mA)</label>
-                    <input type="number" id="tune-theta-current" step="50">
+                    <label>Run Current (<span id="disp-theta-runCurrent">0</span> mA)</label>
+                    <input type="range" id="tune-theta-runCurrent" min="0" max="100" step="1" oninput="updateCurrentDisplay('theta', 'runCurrent')">
                 </div>
                 <div class="form-group">
-                    <label>Toff</label>
-                    <input type="number" id="tune-theta-toff" min="1" max="15">
+                    <label>Hold Current (<span id="disp-theta-holdCurrent">0</span> mA)</label>
+                    <input type="range" id="tune-theta-holdCurrent" min="0" max="100" step="1" oninput="updateCurrentDisplay('theta', 'holdCurrent')">
                 </div>
                 <div class="form-group">
-                    <label>Blank Time</label>
-                    <select id="tune-theta-blankTime">
+                    <label>Hold Delay (0-15)</label>
+                    <input type="number" id="tune-theta-holdDelay" min="0" max="15">
+                </div>
+                <div class="form-group">
+                    <label>Microsteps</label>
+                    <select id="tune-theta-microsteps">
+                        <option value="1">1 (full step)</option>
+                        <option value="2">2</option>
+                        <option value="4">4</option>
+                        <option value="8">8</option>
                         <option value="16">16</option>
-                        <option value="24">24</option>
-                        <option value="36">36</option>
-                        <option value="54">54</option>
+                        <option value="32">32</option>
+                        <option value="64">64</option>
+                        <option value="128">128</option>
+                        <option value="256">256</option>
                     </select>
-                </div>
-                <div class="form-group">
-                    <label>Mode</label>
-                    <select id="tune-theta-spreadCycle">
-                        <option value="false">StealthChop</option>
-                        <option value="true">SpreadCycle</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>PWM Freq</label>
-                    <select id="tune-theta-pwmFreq">
-                        <option value="0">2/1024</option>
-                        <option value="1">2/683</option>
-                        <option value="2">2/512</option>
-                        <option value="3">2/410</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>TPWMTHRS</label>
-                    <input type="number" id="tune-theta-tpwmthrs">
                 </div>
             </div>
+
+            <div class="section-title">StealthChop Settings</div>
+            <div class="grid">
+                <div class="form-group">
+                    <label>StealthChop</label>
+                    <select id="tune-theta-stealthChopEnabled">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled (SpreadCycle)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>StealthChop Threshold</label>
+                    <input type="number" id="tune-theta-stealthChopThreshold" min="0">
+                </div>
+            </div>
+
+            <div class="section-title">CoolStep Settings</div>
+            <div class="grid">
+                <div class="form-group">
+                    <label>CoolStep</label>
+                    <select id="tune-theta-coolStepEnabled">
+                        <option value="false">Disabled</option>
+                        <option value="true">Enabled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Lower Threshold</label>
+                    <input type="number" id="tune-theta-coolStepLowerThreshold" min="0" max="15">
+                </div>
+                <div class="form-group">
+                    <label>Upper Threshold</label>
+                    <input type="number" id="tune-theta-coolStepUpperThreshold" min="0" max="15">
+                </div>
+                <div class="form-group">
+                    <label>Current Increment</label>
+                    <select id="tune-theta-coolStepCurrentIncrement">
+                        <option value="0">1</option>
+                        <option value="1">2</option>
+                        <option value="2">4</option>
+                        <option value="3">8</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Measurement Count</label>
+                    <select id="tune-theta-coolStepMeasurementCount">
+                        <option value="0">32</option>
+                        <option value="1">8</option>
+                        <option value="2">2</option>
+                        <option value="3">1</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>CoolStep Threshold</label>
+                    <input type="number" id="tune-theta-coolStepThreshold" min="0">
+                </div>
+            </div>
+
             <button class="btn-primary" id="btn-save-theta">Save Theta Driver</button>
         </div>
 
         <div class="card">
             <div class="card-title">Rho Driver</div>
+
+            <div class="section-title">Current &amp; Microstepping</div>
             <div class="grid">
                 <div class="form-group">
-                    <label>Current (mA)</label>
-                    <input type="number" id="tune-rho-current" step="50">
+                    <label>Run Current (<span id="disp-rho-runCurrent">0</span> mA)</label>
+                    <input type="range" id="tune-rho-runCurrent" min="0" max="100" step="1" oninput="updateCurrentDisplay('rho', 'runCurrent')">
                 </div>
                 <div class="form-group">
-                    <label>Toff</label>
-                    <input type="number" id="tune-rho-toff" min="1" max="15">
+                    <label>Hold Current (<span id="disp-rho-holdCurrent">0</span> mA)</label>
+                    <input type="range" id="tune-rho-holdCurrent" min="0" max="100" step="1" oninput="updateCurrentDisplay('rho', 'holdCurrent')">
                 </div>
                 <div class="form-group">
-                    <label>Blank Time</label>
-                    <select id="tune-rho-blankTime">
-                        <option value="16">16</option>
-                        <option value="24">24</option>
-                        <option value="36">36</option>
-                        <option value="54">54</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Mode</label>
-                    <select id="tune-rho-spreadCycle">
-                        <option value="false">StealthChop</option>
-                        <option value="true">SpreadCycle</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>PWM Freq</label>
-                    <select id="tune-rho-pwmFreq">
-                        <option value="0">2/1024</option>
-                        <option value="1">2/683</option>
-                        <option value="2">2/512</option>
-                        <option value="3">2/410</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>TPWMTHRS</label>
-                    <input type="number" id="tune-rho-tpwmthrs">
+                    <label>Hold Delay (0-15)</label>
+                    <input type="number" id="tune-rho-holdDelay" min="0" max="15">
                 </div>
             </div>
+
+            <div class="section-title">StealthChop Settings</div>
+            <div class="grid">
+                <div class="form-group">
+                    <label>StealthChop</label>
+                    <select id="tune-rho-stealthChopEnabled">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled (SpreadCycle)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>StealthChop Threshold</label>
+                    <input type="number" id="tune-rho-stealthChopThreshold" min="0">
+                </div>
+            </div>
+
+            <div class="section-title">CoolStep Settings</div>
+            <div class="grid">
+                <div class="form-group">
+                    <label>CoolStep</label>
+                    <select id="tune-rho-coolStepEnabled">
+                        <option value="false">Disabled</option>
+                        <option value="true">Enabled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Lower Threshold</label>
+                    <input type="number" id="tune-rho-coolStepLowerThreshold" min="0" max="15">
+                </div>
+                <div class="form-group">
+                    <label>Upper Threshold</label>
+                    <input type="number" id="tune-rho-coolStepUpperThreshold" min="0" max="15">
+                </div>
+                <div class="form-group">
+                    <label>Current Increment</label>
+                    <select id="tune-rho-coolStepCurrentIncrement">
+                        <option value="0">1</option>
+                        <option value="1">2</option>
+                        <option value="2">4</option>
+                        <option value="3">8</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Measurement Count</label>
+                    <select id="tune-rho-coolStepMeasurementCount">
+                        <option value="0">32</option>
+                        <option value="1">8</option>
+                        <option value="2">2</option>
+                        <option value="3">1</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>CoolStep Threshold</label>
+                    <input type="number" id="tune-rho-coolStepThreshold" min="0">
+                </div>
+            </div>
+
             <button class="btn-primary" id="btn-save-rho">Save Rho Driver</button>
         </div>
 
@@ -388,14 +485,73 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
                 Clear the table before testing.
             </p>
             <div class="test-buttons">
-                <button class="btn-test-theta" id="btn-test-theta">Test Theta</button>
-                <button class="btn-test-rho" id="btn-test-rho">Test Rho</button>
+                <button class="btn-test-theta" id="btn-test-theta-continuous">Theta Spin</button>
+                <button class="btn-test-theta" id="btn-test-theta-stress">Theta Stress</button>
+                <button class="btn-test-rho" id="btn-test-rho-continuous">Rho Sweep</button>
+                <button class="btn-test-rho" id="btn-test-rho-stress">Rho Stress</button>
             </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Driver Diagnostics</div>
+            <p class="test-description">
+                Dump all current register values and status from the TMC2209 drivers for debugging.
+            </p>
+            <div class="dump-buttons">
+                <button class="btn-secondary" id="btn-dump-theta">Dump Theta Driver</button>
+                <button class="btn-secondary" id="btn-dump-rho">Dump Rho Driver</button>
+            </div>
+            <pre class="dump-output" id="dump-output">Click a dump button to view driver registers...</pre>
         </div>
     </div>
 
     <script>
         const apiBase = '/api';
+
+        const maxCurrents = {
+            theta: 1500,
+            rho: 500
+        };
+
+        const driverFields = [
+            'runCurrent', 'holdCurrent', 'holdDelay',
+            'stealthChopEnabled',
+            'stealthChopThreshold',
+            'coolStepEnabled', 'coolStepLowerThreshold', 'coolStepUpperThreshold',
+            'coolStepCurrentIncrement', 'coolStepMeasurementCount', 'coolStepThreshold'
+        ];
+
+        function updateCurrentDisplay(driver, field) {
+            const el = document.getElementById('tune-' + driver + '-' + field);
+            const disp = document.getElementById('disp-' + driver + '-' + field);
+            if (disp && maxCurrents[driver]) {
+                const val = Math.round((el.value / 100) * maxCurrents[driver]);
+                disp.textContent = val;
+            }
+        }
+
+        function getDriverValue(data, field) {
+            const el = document.getElementById('tune-' + data + '-' + field);
+            if (field === 'runCurrent' || field === 'holdCurrent') {
+                return Math.round((el.value / 100) * maxCurrents[data]);
+            }
+            if (el.tagName === 'SELECT') {
+                return el.value;
+            }
+            return el.value;
+        }
+
+        function setDriverValue(data, field, value) {
+            const el = document.getElementById('tune-' + data + '-' + field);
+            if (field === 'runCurrent' || field === 'holdCurrent') {
+                el.value = Math.round((value / maxCurrents[data]) * 100);
+                updateCurrentDisplay(data, field);
+            } else if (el.tagName === 'SELECT') {
+                el.value = String(value);
+            } else {
+                el.value = value;
+            }
+        }
 
         async function loadSettings() {
             try {
@@ -409,19 +565,10 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('tune-tMaxAccel').value = data.motion.tMaxAccel;
                 document.getElementById('tune-tMaxJerk').value = data.motion.tMaxJerk;
 
-                document.getElementById('tune-theta-current').value = data.thetaDriver.current;
-                document.getElementById('tune-theta-toff').value = data.thetaDriver.toff;
-                document.getElementById('tune-theta-blankTime').value = data.thetaDriver.blankTime;
-                document.getElementById('tune-theta-spreadCycle').value = data.thetaDriver.spreadCycle ? 'true' : 'false';
-                document.getElementById('tune-theta-pwmFreq').value = data.thetaDriver.pwmFreq;
-                document.getElementById('tune-theta-tpwmthrs').value = data.thetaDriver.tpwmthrs;
-
-                document.getElementById('tune-rho-current').value = data.rhoDriver.current;
-                document.getElementById('tune-rho-toff').value = data.rhoDriver.toff;
-                document.getElementById('tune-rho-blankTime').value = data.rhoDriver.blankTime;
-                document.getElementById('tune-rho-spreadCycle').value = data.rhoDriver.spreadCycle ? 'true' : 'false';
-                document.getElementById('tune-rho-pwmFreq').value = data.rhoDriver.pwmFreq;
-                document.getElementById('tune-rho-tpwmthrs').value = data.rhoDriver.tpwmthrs;
+                driverFields.forEach(field => {
+                    setDriverValue('theta', field, data.thetaDriver[field]);
+                    setDriverValue('rho', field, data.rhoDriver[field]);
+                });
             } catch (err) {
                 console.error('Failed to load settings:', err);
             }
@@ -439,61 +586,50 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
             alert('Motion settings saved');
         }
 
-        async function saveTheta() {
+        async function saveDriver(driver) {
             const formData = new FormData();
-            formData.append('current', document.getElementById('tune-theta-current').value);
-            formData.append('toff', document.getElementById('tune-theta-toff').value);
-            formData.append('blankTime', document.getElementById('tune-theta-blankTime').value);
-            formData.append('spreadCycle', document.getElementById('tune-theta-spreadCycle').value);
-            formData.append('pwmFreq', document.getElementById('tune-theta-pwmFreq').value);
-            formData.append('tpwmthrs', document.getElementById('tune-theta-tpwmthrs').value);
-            await fetch(apiBase + '/tuning/theta', { method: 'POST', body: formData });
-            alert('Theta driver saved');
+            driverFields.forEach(field => {
+                formData.append(field, getDriverValue(driver, field));
+            });
+            await fetch(apiBase + '/tuning/' + driver, { method: 'POST', body: formData });
+            alert(driver.charAt(0).toUpperCase() + driver.slice(1) + ' driver saved');
         }
 
-        async function saveRho() {
-            const formData = new FormData();
-            formData.append('current', document.getElementById('tune-rho-current').value);
-            formData.append('toff', document.getElementById('tune-rho-toff').value);
-            formData.append('blankTime', document.getElementById('tune-rho-blankTime').value);
-            formData.append('spreadCycle', document.getElementById('tune-rho-spreadCycle').value);
-            formData.append('pwmFreq', document.getElementById('tune-rho-pwmFreq').value);
-            formData.append('tpwmthrs', document.getElementById('tune-rho-tpwmthrs').value);
-            await fetch(apiBase + '/tuning/rho', { method: 'POST', body: formData });
-            alert('Rho driver saved');
-        }
-
-        async function testTheta() {
-            const btn = document.getElementById('btn-test-theta');
+        async function testMotor(motor, type) {
+            const btn = document.getElementById('btn-test-' + motor + '-' + type);
+            const originalText = btn.textContent;
             btn.disabled = true;
             btn.textContent = 'Testing...';
             try {
-                await fetch(apiBase + '/tuning/test/theta', { method: 'POST' });
+                await fetch(apiBase + '/tuning/test/' + motor + '/' + type, { method: 'POST' });
             } catch (err) {
                 console.error('Test failed:', err);
             }
             btn.disabled = false;
-            btn.textContent = 'Test Theta';
+            btn.textContent = originalText;
         }
 
-        async function testRho() {
-            const btn = document.getElementById('btn-test-rho');
-            btn.disabled = true;
-            btn.textContent = 'Testing...';
+        async function dumpDriver(driver) {
+            const output = document.getElementById('dump-output');
+            output.textContent = 'Loading...';
             try {
-                await fetch(apiBase + '/tuning/test/rho', { method: 'POST' });
+                const response = await fetch(apiBase + '/tuning/dump/' + driver);
+                const data = await response.json();
+                output.textContent = JSON.stringify(data, null, 2);
             } catch (err) {
-                console.error('Test failed:', err);
+                output.textContent = 'Error: ' + err.message;
             }
-            btn.disabled = false;
-            btn.textContent = 'Test Rho';
         }
 
         document.getElementById('btn-save-motion').addEventListener('click', saveMotion);
-        document.getElementById('btn-save-theta').addEventListener('click', saveTheta);
-        document.getElementById('btn-save-rho').addEventListener('click', saveRho);
-        document.getElementById('btn-test-theta').addEventListener('click', testTheta);
-        document.getElementById('btn-test-rho').addEventListener('click', testRho);
+        document.getElementById('btn-save-theta').addEventListener('click', () => saveDriver('theta'));
+        document.getElementById('btn-save-rho').addEventListener('click', () => saveDriver('rho'));
+        document.getElementById('btn-test-theta-continuous').addEventListener('click', () => testMotor('theta', 'continuous'));
+        document.getElementById('btn-test-theta-stress').addEventListener('click', () => testMotor('theta', 'stress'));
+        document.getElementById('btn-test-rho-continuous').addEventListener('click', () => testMotor('rho', 'continuous'));
+        document.getElementById('btn-test-rho-stress').addEventListener('click', () => testMotor('rho', 'stress'));
+        document.getElementById('btn-dump-theta').addEventListener('click', () => dumpDriver('theta'));
+        document.getElementById('btn-dump-rho').addEventListener('click', () => dumpDriver('rho'));
 
         window.onload = loadSettings;
     </script>

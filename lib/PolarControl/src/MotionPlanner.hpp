@@ -23,6 +23,10 @@ struct PlannerBlock {
     // Cartesian distance of this segment (for speed calculations)
     double distance;  // mm
 
+    // Unit direction vector (Cartesian)
+    double unitDirX;
+    double unitDirY;
+
     // Effective limits for this segment (constrained by both axes)
     double maxVelocity;   // mm/s (effective)
     double maxAccel;      // mm/s² (effective)
@@ -83,6 +87,11 @@ public:
     // Stop execution immediately
     void stop();
 
+    // Signal that the pattern is ending (no more segments will be added)
+    // When true, planner will decelerate to stop at end of buffer
+    // When false, planner maintains speed expecting more segments
+    void setEndOfPattern(bool ending);
+
     // Get current position
     void getCurrentPosition(double& theta, double& rho) const;
 
@@ -97,7 +106,7 @@ public:
     void process();
 
 private:
-    static constexpr int LOOKAHEAD_SIZE = 16;
+    static constexpr int LOOKAHEAD_SIZE = 32;
     static constexpr double JUNCTION_DEVIATION = 0.5;  // mm - allowable corner cutting
 
     // Block buffer (ring buffer)
@@ -138,6 +147,7 @@ private:
     // Execution state
     volatile bool m_running = false;
     volatile double m_currentVelocity = 0;
+    bool m_endOfPattern = false;  // When true, decelerate to stop at end of buffer
 
     // Timer for step generation
     esp_timer_handle_t m_stepTimer = nullptr;

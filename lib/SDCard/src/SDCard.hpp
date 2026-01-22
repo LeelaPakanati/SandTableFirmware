@@ -34,7 +34,7 @@ inline bool initSDCard() {
     else Serial.println("UNKNOWN");
 
     uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-    Serial.printf("SD Card Size: %llu MB\n", cardSize);
+    Serial.printf("SD Card Size: %llu MB\r\n", cardSize);
 
     // Ensure directory structure exists
     if (!SD.exists("/patterns")) {
@@ -51,7 +51,7 @@ inline bool initSDCard() {
 
 // Helper to list files on SD card
 inline void listSDFiles(const char* dirname = "/") {
-    Serial.printf("\n=== Files on SD Card (%s) ===\n", dirname);
+    Serial.printf("\r\n=== Files on SD Card (%s) ===\r\n", dirname);
 
     File root = SD.open(dirname);
     if (!root) {
@@ -68,14 +68,14 @@ inline void listSDFiles(const char* dirname = "/") {
     int count = 0;
     while (file) {
         if (!file.isDirectory()) {
-            Serial.printf("  %s (%lu bytes)\n", file.name(), (unsigned long)file.size());
+            Serial.printf("  %s (%lu bytes)\r\n", file.name(), (unsigned long)file.size());
             count++;
         }
         file.close();
         file = root.openNextFile();
     }
     
-    Serial.printf("Total files: %d\n\n", count);
+    Serial.printf("Total files: %d\r\n\r\n", count);
 }
 
 // Recursively delete a directory and all its contents

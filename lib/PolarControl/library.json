@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "dependencies": [
     {
-      "name": "TMCStepper",
-      "version": "^0.7.3"
+      "name": "TMC2209",
+      "version": "^9.2.0"
     }
   ]
 }

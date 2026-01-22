@@ -24,6 +24,9 @@ public:
         // Phase end times (cumulative)
         double tEnd[7];
 
+        // Phase end positions (cumulative)
+        double posEnd[7];
+
         // Velocities at phase boundaries
         double v[8];  // v[0] = start, v[7] = end
 
