@@ -22,7 +22,7 @@ The system is built on the ESP32 platform using the Arduino framework within Pla
 ### 2. PolarControl (`lib/PolarControl`)
 This library manages the kinematics and motor driving.
 -   **`PolarControl` Class:** The central interface for movement. Uses `std::unique_ptr` for safe management of position generators.
--   **`MotionPlanner`:** TODO
+-   **`MotionPlanner`:** Handles trajectory generation using independent 7-phase S-curves for Theta and Rho axes. Synchronizes axis movement by time-stretching the faster axis to match the slower one. Uses a lookahead buffer and a high-frequency ISR for precise step generation.
 -   **`PolarUtils`:** TODO
 -   **Kinematics:** 
     -   Positive Theta movement denotes clockwise rotation.

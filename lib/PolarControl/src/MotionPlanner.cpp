@@ -6,13 +6,7 @@
 #include <Arduino.h>
 #include <esp_timer.h>
 #else
-// Native build stubs
-static inline uint32_t micros() { return 0; }
-static inline void digitalWrite(int, int) {}
-static inline void pinMode(int, int) {}
-#define OUTPUT 1
-#define HIGH 1
-#define LOW 0
+#include "esp32_mock.hpp"
 #endif
 
 // Step pulse width in microseconds
@@ -379,7 +373,6 @@ void MotionPlanner::recalculate() {
 void MotionPlanner::start() {
     if (m_running) return;
 
-#ifndef NATIVE_BUILD
     // Create timer if not already created
     if (m_timerHandle == nullptr) {
         esp_timer_create_args_t timerArgs = {
@@ -394,7 +387,6 @@ void MotionPlanner::start() {
 
     // Start the timer
     esp_timer_start_periodic((esp_timer_handle_t)m_timerHandle, STEP_TIMER_PERIOD_US);
-#endif
 
     m_running = true;
     m_segmentStartTime = micros();
@@ -409,11 +401,9 @@ void MotionPlanner::start() {
 void MotionPlanner::stop() {
     if (!m_running) return;
 
-#ifndef NATIVE_BUILD
     if (m_timerHandle != nullptr) {
         esp_timer_stop((esp_timer_handle_t)m_timerHandle);
     }
-#endif
 
     m_running = false;
 

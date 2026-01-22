@@ -8,7 +8,13 @@
 #include <atomic>
 
 // Simulated time - can be advanced manually for testing
-static std::atomic<uint64_t> g_mockMicros{0};
+inline std::atomic<uint64_t> g_mockMicros{0};
+
+// Mock timer state
+inline void (*g_timerCallback)(void* arg) = nullptr;
+inline void* g_timerArg = nullptr;
+inline uint64_t g_timerPeriod = 0;
+inline bool g_timerActive = false;
 
 inline uint32_t micros() {
     return static_cast<uint32_t>(g_mockMicros.load());
@@ -18,12 +24,43 @@ inline uint64_t micros64() {
     return g_mockMicros.load();
 }
 
-inline void advanceMicros(uint32_t us) {
-    g_mockMicros.fetch_add(us);
-}
-
 inline void setMicros(uint64_t us) {
     g_mockMicros.store(us);
+}
+
+// Advance time and fire timer callbacks if active
+inline void advanceMicros(uint32_t us) {
+    if (!g_timerActive || g_timerPeriod == 0) {
+        g_mockMicros.fetch_add(us);
+        return;
+    }
+
+    // Step through time in increments of the period to fire callbacks
+    uint64_t current = g_mockMicros.load();
+    uint64_t target = current + us;
+    
+    // Align next interrupt to period boundary relative to 0
+    // This isn't strictly necessary for all tests but helps with consistency
+    uint64_t nextInterrupt = ((current / g_timerPeriod) + 1) * g_timerPeriod;
+    
+    while (current < target) {
+        if (nextInterrupt <= target) {
+            // Jump to next interrupt
+            g_mockMicros.store(nextInterrupt);
+            current = nextInterrupt;
+            
+            // Fire callback
+            if (g_timerCallback) {
+                g_timerCallback(g_timerArg);
+            }
+            
+            nextInterrupt += g_timerPeriod;
+        } else {
+            // Remaining time is less than a period
+            g_mockMicros.store(target);
+            current = target;
+        }
+    }
 }
 
 // Use real time for wall-clock timing
@@ -66,23 +103,33 @@ struct esp_timer_create_args_t {
 #define ESP_TIMER_TASK 0
 
 inline int esp_timer_create(const esp_timer_create_args_t* args, esp_timer_handle_t* handle) {
-    (void)args; (void)handle;
-    *handle = nullptr;
+    g_timerCallback = args->callback;
+    g_timerArg = args->arg;
+    
+    // Return a dummy non-null handle
+    static int dummyHandle = 1;
+    *handle = (esp_timer_handle_t)&dummyHandle;
     return 0;
 }
 
 inline int esp_timer_start_periodic(esp_timer_handle_t handle, uint64_t period_us) {
-    (void)handle; (void)period_us;
+    (void)handle;
+    g_timerPeriod = period_us;
+    g_timerActive = true;
     return 0;
 }
 
 inline int esp_timer_stop(esp_timer_handle_t handle) {
     (void)handle;
+    g_timerActive = false;
     return 0;
 }
 
 inline int esp_timer_delete(esp_timer_handle_t handle) {
     (void)handle;
+    g_timerActive = false;
+    g_timerCallback = nullptr;
+    g_timerArg = nullptr;
     return 0;
 }
 

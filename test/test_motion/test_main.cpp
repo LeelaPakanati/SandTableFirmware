@@ -322,12 +322,20 @@ bool testSpeedMultiplier() {
     planner.start();
 
     setMicros(0);
-    while (planner.isRunning()) {
+    int iterations = 0;
+    int maxIterations = 50000;
+    while (planner.isRunning() && iterations < maxIterations) {
         planner.process();
         advanceMicros(20000);
+        iterations++;
     }
     double fullSpeedTime = g_mockMicros.load() / 1000000.0;
     planner.stop();
+
+    if (iterations >= maxIterations) {
+        std::cout << "FAIL: Full speed run timeout" << std::endl;
+        return false;
+    }
 
     // Reset and run at half speed
     planner.init(STEPS_PER_MM_R, STEPS_PER_RAD_T, R_MAX,
@@ -343,11 +351,18 @@ bool testSpeedMultiplier() {
     planner.start();
 
     setMicros(0);
-    while (planner.isRunning()) {
+    iterations = 0;
+    while (planner.isRunning() && iterations < maxIterations) {
         planner.process();
         advanceMicros(20000);
+        iterations++;
     }
     double halfSpeedTime = g_mockMicros.load() / 1000000.0;
+
+    if (iterations >= maxIterations) {
+        std::cout << "FAIL: Half speed run timeout" << std::endl;
+        return false;
+    }
 
     std::cout << "Full speed time: " << fullSpeedTime << "s" << std::endl;
     std::cout << "Half speed time: " << halfSpeedTime << "s" << std::endl;
@@ -384,13 +399,31 @@ bool testPatternFile(const std::string& filepath) {
     // Feed segments to planner
     int segmentsAdded = 0;
     double theta, rho;
+    bool started = false;
 
     while (reader.getNextPosition(theta, rho)) {
         // Keep buffer moderately full
-        while (!planner.hasSpace()) {
-            // Process to make room
-            planner.process();
-            advanceMicros(1000);
+        if (!planner.hasSpace()) {
+            planner.recalculate();
+            
+            if (!started) {
+                planner.start();
+                started = true;
+                setMicros(0); // Reset time for simulation tracking
+            }
+
+            int waitIters = 0;
+            while (!planner.hasSpace() && waitIters < 100000) { // Increased timeout
+                // Process to make room
+                planner.process();
+                advanceMicros(1000);
+                waitIters++;
+            }
+            
+            if (waitIters >= 100000) {
+                std::cout << "FAIL: Buffer clear timeout" << std::endl;
+                return false;
+            }
         }
 
         if (planner.addSegment(theta, rho)) {
@@ -401,8 +434,6 @@ bool testPatternFile(const std::string& filepath) {
         if (reader.currentIndex() >= reader.size()) {
             planner.setEndOfPattern(true);
         }
-
-        planner.recalculate();
     }
 
     std::cout << "Added " << segmentsAdded << " segments" << std::endl;
@@ -410,9 +441,12 @@ bool testPatternFile(const std::string& filepath) {
     // Start and run to completion
     planner.setEndOfPattern(true);
     planner.recalculate();
-    planner.start();
-
-    setMicros(0);
+    
+    if (!started) {
+        planner.start();
+        started = true;
+        setMicros(0);
+    }
     int iterations = 0;
     int maxIterations = 1000000;
 

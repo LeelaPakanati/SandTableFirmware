@@ -1,5 +1,10 @@
 # MotionPlanner Redesign Plan
 
+  ## Status Update (2026-01-22)
+  - **Phase 1 (S-Curve Validation):** COMPLETED
+  - **Phase 2 (MotionPlanner Implementation):** COMPLETED
+  - **Phase 3 (Verification):** Desktop tests passing. Full pattern playback verified with `shell.thr`.
+
   ## Overview
 
   Rewrite the MotionPlanner for the polar Sisyphus table to treat theta and rho as **completely independent axes** (no Cartesian
@@ -7,7 +12,7 @@
 
   ## Implementation Phases
 
-  ### Phase 1: Validate S-Curve Implementation
+  ### Phase 1: Validate S-Curve Implementation [COMPLETED]
   Before building the MotionPlanner, validate and fix the existing SCurve class.
 
   **Validation checklist:**
@@ -21,7 +26,7 @@
   - Line 100: `vCruise -= 0.5` - hardcoded step size may not work for all unit scales
   - Reduced jerk profile calculation may have issues with very small velocity deltas
 
-  ### Phase 2: Implement MotionPlanner
+  ### Phase 2: Implement MotionPlanner [COMPLETED]
   Build the new MotionPlanner with independent axis control.
 
   ## Key Design Decisions
@@ -218,12 +223,12 @@
   ```
 
   **Validation checks:**
-  - [ ] Velocity never exceeds scaled max for either axis
-  - [ ] Acceleration never exceeds max for either axis
-  - [ ] Jerk never exceeds max for either axis
-  - [ ] Both axes complete each segment at the same time (within tolerance)
-  - [ ] Step timing is consistent with velocity profile
-  - [ ] No step queue underruns
+  - [X] Velocity never exceeds scaled max for either axis
+  - [X] Acceleration never exceeds max for either axis
+  - [X] Jerk never exceeds max for either axis
+  - [X] Both axes complete each segment at the same time (within tolerance)
+  - [X] Step timing is consistent with velocity profile
+  - [X] No step queue underruns
 
   **Build approach: PlatformIO native environment**
 
@@ -255,6 +260,12 @@
   # Or build and run manually
   pio run -e native
   .pio/build/native/program patterns/some_pattern.thr
+  ```
+
+  **Single Command Execution:**
+  A helper script has been created to build the environment, run unit tests, and validate all available pattern files in one go:
+  ```bash
+  ./run_all_tests.sh
   ```
 
   ### On-Device Testing (Secondary)
