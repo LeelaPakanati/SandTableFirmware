@@ -23,7 +23,9 @@ class FilePosGen : public PosGen {
 
     FilePosGen(String filePath, double maxRho = 450.0) :
       m_currFile(filePath),
-      m_maxRho(maxRho)
+      m_maxRho(maxRho),
+      m_bufHead(0),
+      m_bufTail(0)
     {
       m_file = SD.open(filePath.c_str(), FILE_READ);
       if (!m_file) {
@@ -36,20 +38,22 @@ class FilePosGen : public PosGen {
         Serial.print(" (Size: ");
         Serial.print(m_fileSize);
         Serial.println(" bytes)");
+        fillBuffer(); // Initial fill
       }
     }
 
     PolarCord_t getNextPos() override {
-      if (!m_file || !m_file.available()) {
-        if (m_file) {
-          m_file.close();
-          Serial.println("End of file reached");
-        }
+      if (!m_file && m_bufHead == m_bufTail) {
         return {std::nan(""), std::nan("")};
       }
 
-      // Read a line from the file
-      String line = m_file.readStringUntil('\n');
+      // Read a line from the buffer
+      String line = readBufferedLine();
+      if (line.length() == 0 && !m_file && m_bufHead == m_bufTail) {
+          // EOF
+          return {std::nan(""), std::nan("")};
+      }
+      
       line.trim();
       m_currLine++;
 
@@ -103,4 +107,69 @@ class FilePosGen : public PosGen {
     double m_maxRho;
     File m_file;
     size_t m_fileSize = 0;
+
+    static constexpr size_t BUF_SIZE = 1024;
+    uint8_t m_buffer[BUF_SIZE];
+    int m_bufHead = 0;
+    int m_bufTail = 0;
+
+    void fillBuffer() {
+        if (!m_file || !m_file.available()) return;
+        
+        // Move existing data to front if needed
+        if (m_bufHead > 0 && m_bufHead < m_bufTail) {
+            memmove(m_buffer, m_buffer + m_bufHead, m_bufTail - m_bufHead);
+            m_bufTail -= m_bufHead;
+            m_bufHead = 0;
+        } else if (m_bufHead == m_bufTail) {
+            m_bufHead = 0;
+            m_bufTail = 0;
+        }
+
+        // Read more
+        if (m_bufTail < BUF_SIZE) {
+            int toRead = BUF_SIZE - m_bufTail;
+            int bytesRead = m_file.read(m_buffer + m_bufTail, toRead);
+            if (bytesRead > 0) {
+                m_bufTail += bytesRead;
+            } else if (bytesRead < 0) {
+                // Error or end
+                m_file.close();
+            }
+        }
+    }
+
+    String readBufferedLine() {
+        String line = "";
+        
+        while (true) {
+            // Refill if empty
+            if (m_bufHead >= m_bufTail) {
+                fillBuffer();
+                if (m_bufHead >= m_bufTail) break; // EOF
+            }
+
+            // Scan for newline
+            bool foundNewline = false;
+            for (int i = m_bufHead; i < m_bufTail; i++) {
+                char c = (char)m_buffer[i];
+                if (c == '\n') {
+                    line += String((char*)m_buffer + m_bufHead, i - m_bufHead);
+                    m_bufHead = i + 1;
+                    foundNewline = true;
+                    break;
+                }
+            }
+
+            if (foundNewline) break;
+
+            // No newline in current buffer, append all and refill
+            line += String((char*)m_buffer + m_bufHead, m_bufTail - m_bufHead);
+            m_bufHead = m_bufTail;
+            
+            // Check max line length to prevent memory issues with weird files
+            if (line.length() > 256) break; 
+        }
+        return line;
+    }
 };
