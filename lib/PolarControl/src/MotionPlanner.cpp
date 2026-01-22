@@ -445,10 +445,6 @@ void MotionPlanner::process() {
             current.executing = false;
             m_completedCount++;
 
-            // Update queued position
-            m_queuedTSteps.store(current.theta.targetSteps);
-            m_queuedRSteps.store(current.rho.targetSteps);
-
             // Move to next segment
             m_segmentTail = (m_segmentTail + 1) % SEGMENT_BUFFER_SIZE;
             m_segmentCount--;
