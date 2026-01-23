@@ -467,11 +467,8 @@ bool PolarControl::processNextMove() {
 void PolarControl::setMotionSettings(const MotionSettings& settings) {
     m_motionSettings = settings;
 
-    // Update the motion planner with new limits
-    m_planner.init(
-        getStepsPerMm(),
-        getStepsPerRadian(),
-        R_MAX,
+    // Update the motion planner with new limits (doesn't reset positions)
+    m_planner.setMotionLimits(
         m_motionSettings.rMaxVelocity,
         m_motionSettings.rMaxAccel,
         m_motionSettings.rMaxJerk,

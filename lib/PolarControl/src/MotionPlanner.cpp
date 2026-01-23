@@ -693,6 +693,31 @@ void MotionPlanner::resetTheta() {
     }
 }
 
+void MotionPlanner::setMotionLimits(double rMaxVel, double rMaxAccel, double rMaxJerk,
+                                     double tMaxVel, double tMaxAccel, double tMaxJerk) {
+    m_rMaxVel = rMaxVel;
+    m_rMaxAccel = rMaxAccel;
+    m_rMaxJerk = rMaxJerk;
+    m_tMaxVel = tMaxVel;
+    m_tMaxAccel = tMaxAccel;
+    m_tMaxJerk = tMaxJerk;
+
+    // Mark all non-executing segments as needing recalculation
+    int idx = m_segmentTail;
+    for (int i = 0; i < m_segmentCount; i++) {
+        Segment& seg = m_segments[idx];
+        if (!seg.executing) {
+            seg.calculated = false;
+        }
+        idx = (idx + 1) % SEGMENT_BUFFER_SIZE;
+    }
+
+    // Recalculate all pending segments with new limits
+    if (m_segmentCount > 0) {
+        recalculate();
+    }
+}
+
 void MotionPlanner::setSpeedMultiplier(double mult) {
     double newMult = std::max(0.1, std::min(1.0, mult));
 

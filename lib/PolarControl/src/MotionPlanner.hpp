@@ -126,6 +126,10 @@ public:
     // Set speed multiplier (0.1 to 1.0, scales velocity only)
     void setSpeedMultiplier(double mult);
 
+    // Update motion limits without resetting positions (safe to call while running)
+    void setMotionLimits(double rMaxVel, double rMaxAccel, double rMaxJerk,
+                         double tMaxVel, double tMaxAccel, double tMaxJerk);
+
     // Signal end of pattern (causes deceleration to stop)
     void setEndOfPattern(bool ending);
 
