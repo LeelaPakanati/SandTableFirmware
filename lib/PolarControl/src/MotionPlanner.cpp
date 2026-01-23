@@ -17,14 +17,14 @@ static constexpr uint32_t DIR_SETUP_TIME_US = 1;
 MotionPlanner::MotionPlanner()
     : m_stepsPerMmR(100)
     , m_stepsPerRadT(3000)
-    , m_maxRho(450.0)
-    , m_rMaxVel(30.0)
-    , m_rMaxAccel(20.0)
-    , m_rMaxJerk(100.0)
-    , m_tMaxVel(1.0)
-    , m_tMaxAccel(2.0)
-    , m_tMaxJerk(10.0)
-    , m_speedMultiplier(1.0)
+    , m_maxRho(450.0f)
+    , m_rMaxVel(30.0f)
+    , m_rMaxAccel(20.0f)
+    , m_rMaxJerk(100.0f)
+    , m_tMaxVel(1.0f)
+    , m_tMaxAccel(2.0f)
+    , m_tMaxJerk(10.0f)
+    , m_speedMultiplier(1.0f)
     , m_segmentHead(0)
     , m_segmentTail(0)
     , m_segmentCount(0)
@@ -32,12 +32,12 @@ MotionPlanner::MotionPlanner()
     , m_queuedRSteps(0)
     , m_executedTSteps(0)
     , m_executedRSteps(0)
-    , m_targetTheta(0.0)
-    , m_targetRho(0.0)
+    , m_targetTheta(0.0f)
+    , m_targetRho(0.0f)
     , m_stepQueueHead(0)
     , m_stepQueueTail(0)
     , m_segmentStartTime(0)
-    , m_segmentElapsed(0.0)
+    , m_segmentElapsed(0.0f)
     , m_running(false)
     , m_endOfPattern(false)
     , m_completedCount(0)
@@ -54,9 +54,9 @@ MotionPlanner::~MotionPlanner() {
     stop();
 }
 
-void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, double maxRho,
-                         double rMaxVel, double rMaxAccel, double rMaxJerk,
-                         double tMaxVel, double tMaxAccel, double tMaxJerk) {
+void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
+                         float rMaxVel, float rMaxAccel, float rMaxJerk,
+                         float tMaxVel, float tMaxAccel, float tMaxJerk) {
     m_stepsPerMmR = stepsPerMmR;
     m_stepsPerRadT = stepsPerRadT;
     m_maxRho = maxRho;
@@ -85,8 +85,8 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, double maxRho,
     m_queuedRSteps = 0;
     m_executedTSteps = 0;
     m_executedRSteps = 0;
-    m_targetTheta = 0.0;
-    m_targetRho = 0.0;
+    m_targetTheta = 0.0f;
+    m_targetRho = 0.0f;
 
     // Reset buffer
     m_segmentHead = 0;
@@ -96,13 +96,13 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, double maxRho,
     m_stepQueueTail = 0;
 }
 
-bool MotionPlanner::addSegment(double theta, double rho) {
+bool MotionPlanner::addSegment(float theta, float rho) {
     if (!hasSpace()) {
         return false;
     }
 
     // Clamp rho to valid range
-    rho = std::max(0.0, std::min(rho, m_maxRho));
+    rho = std::max(0.0f, std::min(rho, m_maxRho));
 
     Segment& seg = m_segments[m_segmentHead];
     seg.targetTheta = theta;
@@ -113,7 +113,7 @@ bool MotionPlanner::addSegment(double theta, double rho) {
     // Reset execution/generation state for new segment
     seg.thetaPhaseIdx = 0;
     seg.rhoPhaseIdx = 0;
-    seg.lastGenTimeF = 0.0;
+    seg.lastGenTime = 0.0f;
 
     // Set start positions based on previous segment or queued position
     if (m_segmentCount > 0) {
@@ -161,12 +161,12 @@ bool MotionPlanner::addSegment(double theta, double rho) {
 
 void MotionPlanner::calculateSegmentProfile(Segment& seg) {
     // Apply speed multiplier to velocity limits only
-    double tMaxVel = m_tMaxVel * m_speedMultiplier;
-    double rMaxVel = m_rMaxVel * m_speedMultiplier;
+    float tMaxVel = m_tMaxVel * m_speedMultiplier;
+    float rMaxVel = m_rMaxVel * m_speedMultiplier;
 
     // Calculate S-curve for theta axis
-    double thetaDist = std::abs(seg.theta.deltaUnits);
-    if (thetaDist > 0.0001) {
+    float thetaDist = fabsf(seg.theta.deltaUnits);
+    if (thetaDist > 0.0001f) {
         SCurve::calculate(
             thetaDist,
             seg.thetaEntryVel,
@@ -178,17 +178,17 @@ void MotionPlanner::calculateSegmentProfile(Segment& seg) {
         );
     } else {
         // Zero motion - zero-duration profile
-        seg.theta.profile.totalTime = 0;
-        seg.theta.profile.totalDistance = 0;
+        seg.theta.profile.totalTime = 0.0f;
+        seg.theta.profile.totalDistance = 0.0f;
         for (int i = 0; i < 7; i++) {
-            seg.theta.profile.t[i] = 0;
-            seg.theta.profile.tEnd[i] = 0;
+            seg.theta.profile.t[i] = 0.0f;
+            seg.theta.profile.tEnd[i] = 0.0f;
         }
     }
 
     // Calculate S-curve for rho axis
-    double rhoDist = std::abs(seg.rho.deltaUnits);
-    if (rhoDist > 0.0001) {
+    float rhoDist = fabsf(seg.rho.deltaUnits);
+    if (rhoDist > 0.0001f) {
         SCurve::calculate(
             rhoDist,
             seg.rhoEntryVel,
@@ -200,37 +200,33 @@ void MotionPlanner::calculateSegmentProfile(Segment& seg) {
         );
     } else {
         // Zero motion - zero-duration profile
-        seg.rho.profile.totalTime = 0;
-        seg.rho.profile.totalDistance = 0;
+        seg.rho.profile.totalTime = 0.0f;
+        seg.rho.profile.totalDistance = 0.0f;
         for (int i = 0; i < 7; i++) {
-            seg.rho.profile.t[i] = 0;
-            seg.rho.profile.tEnd[i] = 0;
+            seg.rho.profile.t[i] = 0.0f;
+            seg.rho.profile.tEnd[i] = 0.0f;
         }
     }
 
     // Synchronize durations - stretch the faster axis to match the slower one
-    double thetaTime = seg.theta.profile.totalTime;
-    double rhoTime = seg.rho.profile.totalTime;
-    double syncDuration = std::max(thetaTime, rhoTime);
+    float thetaTime = seg.theta.profile.totalTime;
+    float rhoTime = seg.rho.profile.totalTime;
+    float syncDuration = std::max(thetaTime, rhoTime);
 
     // Enforce minimum segment duration
     syncDuration = std::max(syncDuration, MIN_SEGMENT_DURATION);
 
     seg.duration = syncDuration;
 
-    // Calculate time scale for each axis (float for FPU optimization)
+    // Calculate time scale for each axis
     // timeScale > 1 means we stretch the profile (slower motion)
-    seg.theta.timeScaleF = (thetaTime > 0.0001) ? (float)(syncDuration / thetaTime) : 1.0f;
-    seg.rho.timeScaleF = (rhoTime > 0.0001) ? (float)(syncDuration / rhoTime) : 1.0f;
-
-    // Convert profiles to float for real-time FPU evaluation
-    SCurve::toFloat(seg.theta.profile, seg.theta.profileF);
-    SCurve::toFloat(seg.rho.profile, seg.rho.profileF);
+    seg.theta.timeScale = (thetaTime > 0.0001f) ? (syncDuration / thetaTime) : 1.0f;
+    seg.rho.timeScale = (rhoTime > 0.0001f) ? (syncDuration / rhoTime) : 1.0f;
 
     seg.thetaPhaseIdx = 0;
     seg.rhoPhaseIdx = 0;
 
-    seg.lastGenTimeF = 0;
+    seg.lastGenTime = 0.0f;
     seg.lastGenThetaSteps = seg.theta.startSteps;
     seg.lastGenRhoSteps = seg.rho.startSteps;
 
@@ -241,16 +237,16 @@ void MotionPlanner::recalculate() {
     if (m_segmentCount == 0) return;
 
     // Apply speed multiplier to velocity limits
-    double tMaxVel = m_tMaxVel * m_speedMultiplier;
-    double rMaxVel = m_rMaxVel * m_speedMultiplier;
+    float tMaxVel = m_tMaxVel * m_speedMultiplier;
+    float rMaxVel = m_rMaxVel * m_speedMultiplier;
 
     // =========================================================================
     // PASS 1: Forward pass - Set entry velocities from previous segment's exit
     // =========================================================================
 
     // Get starting velocity from currently executing segment or 0
-    double prevThetaVel = 0.0;
-    double prevRhoVel = 0.0;
+    float prevThetaVel = 0.0f;
+    float prevRhoVel = 0.0f;
     int8_t prevThetaDir = 0;
     int8_t prevRhoDir = 0;
 
@@ -275,8 +271,8 @@ void MotionPlanner::recalculate() {
             bool rhoReverses = (prevRhoDir != 0) && (seg.rho.direction != 0) &&
                                (prevRhoDir != seg.rho.direction);
 
-            seg.thetaEntryVel = thetaReverses ? 0.0 : std::min(prevThetaVel, tMaxVel);
-            seg.rhoEntryVel = rhoReverses ? 0.0 : std::min(prevRhoVel, rMaxVel);
+            seg.thetaEntryVel = thetaReverses ? 0.0f : std::min(prevThetaVel, tMaxVel);
+            seg.rhoEntryVel = rhoReverses ? 0.0f : std::min(prevRhoVel, rMaxVel);
 
             // Set initial exit velocities to max (will be constrained in backward pass)
             seg.thetaExitVel = tMaxVel;
@@ -300,8 +296,8 @@ void MotionPlanner::recalculate() {
 
     // The last segment must exit at 0 if end of pattern
     if (m_endOfPattern) {
-        m_segments[lastIdx].thetaExitVel = 0.0;
-        m_segments[lastIdx].rhoExitVel = 0.0;
+        m_segments[lastIdx].thetaExitVel = 0.0f;
+        m_segments[lastIdx].rhoExitVel = 0.0f;
     }
 
     // Work backwards, propagating constraints
@@ -327,14 +323,14 @@ void MotionPlanner::recalculate() {
                                (seg.rho.direction != nextSeg.rho.direction);
 
             if (thetaReverses) {
-                seg.thetaExitVel = 0.0;
+                seg.thetaExitVel = 0.0f;
             } else {
                 // Exit velocity can't exceed next segment's entry velocity
                 seg.thetaExitVel = std::min(seg.thetaExitVel, nextSeg.thetaEntryVel);
             }
 
             if (rhoReverses) {
-                seg.rhoExitVel = 0.0;
+                seg.rhoExitVel = 0.0f;
             } else {
                 seg.rhoExitVel = std::min(seg.rhoExitVel, nextSeg.rhoEntryVel);
             }
@@ -343,18 +339,18 @@ void MotionPlanner::recalculate() {
         // Now check if our entry velocity can achieve the required exit velocity
         // If not, we need to reduce entry velocity and propagate backward
 
-        double thetaDist = std::abs(seg.theta.deltaUnits);
-        if (thetaDist > 0.0001) {
-            double maxEntry = SCurve::maxAchievableEntryVelocity(
+        float thetaDist = fabsf(seg.theta.deltaUnits);
+        if (thetaDist > 0.0001f) {
+            float maxEntry = SCurve::maxAchievableEntryVelocity(
                 thetaDist, seg.thetaExitVel, tMaxVel, m_tMaxAccel, m_tMaxJerk);
             if (seg.thetaEntryVel > maxEntry) {
                 seg.thetaEntryVel = maxEntry;
             }
         }
 
-        double rhoDist = std::abs(seg.rho.deltaUnits);
-        if (rhoDist > 0.0001) {
-            double maxEntry = SCurve::maxAchievableEntryVelocity(
+        float rhoDist = fabsf(seg.rho.deltaUnits);
+        if (rhoDist > 0.0001f) {
+            float maxEntry = SCurve::maxAchievableEntryVelocity(
                 rhoDist, seg.rhoExitVel, rMaxVel, m_rMaxAccel, m_rMaxJerk);
             if (seg.rhoEntryVel > maxEntry) {
                 seg.rhoEntryVel = maxEntry;
@@ -383,7 +379,7 @@ void MotionPlanner::recalculate() {
     for (int i = 0; i < m_segmentCount; i++) {
         Segment& seg = m_segments[idx];
         // Only calculate if not already executing AND no steps generated yet
-        if (!seg.executing && seg.lastGenTimeF < 0.0001) {
+        if (!seg.executing && seg.lastGenTime < 0.0001f) {
             calculateSegmentProfile(seg);
         }
         idx = (idx + 1) % SEGMENT_BUFFER_SIZE;
@@ -407,7 +403,7 @@ void MotionPlanner::start() {
 
     m_running = true;
     m_segmentStartTime = micros();
-    m_segmentElapsed = 0.0;
+    m_segmentElapsed = 0.0f;
 
     // Mark first segment as executing
     if (m_segmentCount > 0) {
@@ -454,7 +450,7 @@ void MotionPlanner::process() {
     // If we have segments but none are executing, start the first one
     if (m_segmentCount > 0 && !m_segments[m_segmentTail].executing) {
         m_segmentStartTime = micros();
-        m_segmentElapsed = 0.0;
+        m_segmentElapsed = 0.0f;
         m_segments[m_segmentTail].executing = true;
     }
 
@@ -473,19 +469,19 @@ void MotionPlanner::process() {
 
         // Calculate elapsed time in current segment
         uint32_t now = micros();
-        double elapsed = (now - m_segmentStartTime) / 1000000.0;
+        float elapsed = (now - m_segmentStartTime) / 1000000.0f;
 
         // Check if current segment is complete
         // It's complete if time has elapsed AND we've generated all steps for it
-        if (current.executing && elapsed >= current.duration && 
-            current.lastGenTimeF >= current.duration - 0.000001) {
-            
+        if (current.executing && elapsed >= current.duration &&
+            current.lastGenTime >= current.duration - 0.000001f) {
+
             if (m_segmentCount < 5 && m_endOfPattern) {
-                double curT, curR;
+                float curT, curR;
                 getCurrentPosition(curT, curR);
                 printf("[DEBUG] Segment %u complete. count=%d, target=(%.3f, %.3f), actual=(%.3f, %.3f), duration=%.3f, elapsed=%.3f\n",
                        m_completedCount, m_segmentCount, current.targetTheta, current.targetRho,
-                       curT, curR, current.duration, elapsed);
+                       curT, curR, (double)current.duration, (double)elapsed);
             }
 
             // Segment complete
@@ -499,7 +495,7 @@ void MotionPlanner::process() {
             // Start next segment
             if (m_segmentCount > 0) {
                 m_segmentStartTime = now;
-                m_segmentElapsed = 0.0;
+                m_segmentElapsed = 0.0f;
                 m_segments[m_segmentTail].executing = true;
             }
         }
@@ -519,15 +515,13 @@ void MotionPlanner::fillStepQueue() {
 
     uint32_t now = micros();
 
-    // All calculations use float for ESP32 FPU optimization
-    // The ESP32 FPU only supports single-precision, so double is ~3x slower
-    float segDuration = (float)seg.duration;
+    float segDuration = seg.duration;
 
     // Calculate current wall-clock position in segment time
     float wallTime = (now - m_segmentStartTime) / 1000000.0f;
 
     // Start generating from where we last generated
-    float t = seg.lastGenTimeF;
+    float t = seg.lastGenTime;
     float tEnd = std::min(segDuration, wallTime + (STEP_QUEUE_HORIZON_US / 1000000.0f));
 
     static constexpr float SAMPLE_INTERVAL = STEP_TIMER_PERIOD_US / 1000000.0f;
@@ -536,22 +530,22 @@ void MotionPlanner::fillStepQueue() {
     int32_t lastRhoSteps = seg.lastGenRhoSteps;
 
     // Cache profile references for faster access
-    const SCurve::ProfileF& thetaProf = seg.theta.profileF;
-    const SCurve::ProfileF& rhoProf = seg.rho.profileF;
-    float thetaTimeScale = seg.theta.timeScaleF;
-    float rhoTimeScale = seg.rho.timeScaleF;
+    const SCurve::Profile& thetaProf = seg.theta.profile;
+    const SCurve::Profile& rhoProf = seg.rho.profile;
+    float thetaTimeScale = seg.theta.timeScale;
+    float rhoTimeScale = seg.rho.timeScale;
 
     while (t <= tEnd) {
         // Get position from S-curve profile (with time scaling)
         float thetaProfileTime = t / thetaTimeScale;
         float rhoProfileTime = t / rhoTimeScale;
 
-        // Get fractional position (0 to 1) using float-optimized getPosition
+        // Get fractional position (0 to 1)
         float thetaFrac = (thetaProf.totalDistance > 0.0f)
-            ? SCurve::getPositionF(thetaProf, thetaProfileTime, seg.thetaPhaseIdx) / thetaProf.totalDistance
+            ? SCurve::getPosition(thetaProf, thetaProfileTime, seg.thetaPhaseIdx) / thetaProf.totalDistance
             : 0.0f;
         float rhoFrac = (rhoProf.totalDistance > 0.0f)
-            ? SCurve::getPositionF(rhoProf, rhoProfileTime, seg.rhoPhaseIdx) / rhoProf.totalDistance
+            ? SCurve::getPosition(rhoProf, rhoProfileTime, seg.rhoPhaseIdx) / rhoProf.totalDistance
             : 0.0f;
 
         // Calculate target steps
@@ -616,7 +610,7 @@ void MotionPlanner::fillStepQueue() {
                         else lastRhoSteps++;
                     }
 
-                    seg.lastGenTimeF = t;
+                    seg.lastGenTime = t;
                     seg.lastGenThetaSteps = lastThetaSteps;
                     seg.lastGenRhoSteps = lastRhoSteps;
                     return;
@@ -628,7 +622,7 @@ void MotionPlanner::fillStepQueue() {
     }
 
     // Finished this batch - save state
-    seg.lastGenTimeF = t;
+    seg.lastGenTime = t;
     seg.lastGenThetaSteps = lastThetaSteps;
     seg.lastGenRhoSteps = lastRhoSteps;
 }
@@ -671,7 +665,7 @@ bool MotionPlanner::isIdle() const {
     return !m_running && m_segmentCount == 0 && queueEmpty;
 }
 
-void MotionPlanner::getCurrentPosition(double& theta, double& rho) const {
+void MotionPlanner::getCurrentPosition(float& theta, float& rho) const {
     theta = stepsToTheta(m_executedTSteps);
     rho = stepsToRho(m_executedRSteps);
 }
@@ -680,7 +674,7 @@ void MotionPlanner::resetTheta() {
     // Reset theta to zero at current position
     m_executedTSteps = 0;
     m_queuedTSteps = 0;
-    m_targetTheta = 0.0;
+    m_targetTheta = 0.0f;
 
     // Update any pending segments
     for (int i = 0; i < SEGMENT_BUFFER_SIZE; i++) {
@@ -690,8 +684,8 @@ void MotionPlanner::resetTheta() {
     }
 }
 
-void MotionPlanner::setMotionLimits(double rMaxVel, double rMaxAccel, double rMaxJerk,
-                                     double tMaxVel, double tMaxAccel, double tMaxJerk) {
+void MotionPlanner::setMotionLimits(float rMaxVel, float rMaxAccel, float rMaxJerk,
+                                     float tMaxVel, float tMaxAccel, float tMaxJerk) {
     m_rMaxVel = rMaxVel;
     m_rMaxAccel = rMaxAccel;
     m_rMaxJerk = rMaxJerk;
@@ -715,11 +709,11 @@ void MotionPlanner::setMotionLimits(double rMaxVel, double rMaxAccel, double rMa
     }
 }
 
-void MotionPlanner::setSpeedMultiplier(double mult) {
-    double newMult = std::max(0.1, std::min(1.0, mult));
+void MotionPlanner::setSpeedMultiplier(float mult) {
+    float newMult = std::max(0.1f, std::min(1.0f, mult));
 
     // Only recalculate if multiplier actually changed
-    if (std::abs(newMult - m_speedMultiplier) < 0.001) {
+    if (fabsf(newMult - m_speedMultiplier) < 0.001f) {
         return;
     }
 
@@ -748,23 +742,23 @@ void MotionPlanner::getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) co
     underruns = m_underrunCount.load();
 }
 
-int32_t MotionPlanner::thetaToSteps(double theta) const {
+int32_t MotionPlanner::thetaToSteps(float theta) const {
     return (int32_t)(theta * m_stepsPerRadT);
 }
 
-int32_t MotionPlanner::rhoToSteps(double rho) const {
+int32_t MotionPlanner::rhoToSteps(float rho) const {
     return (int32_t)(rho * m_stepsPerMmR);
 }
 
-double MotionPlanner::stepsToTheta(int32_t steps) const {
-    return (double)steps / m_stepsPerRadT;
+float MotionPlanner::stepsToTheta(int32_t steps) const {
+    return (float)steps / m_stepsPerRadT;
 }
 
-double MotionPlanner::stepsToRho(int32_t steps) const {
-    return (double)steps / m_stepsPerMmR;
+float MotionPlanner::stepsToRho(int32_t steps) const {
+    return (float)steps / m_stepsPerMmR;
 }
 
-// ISR callback - called at 25kHz (40us period)
+// ISR callback - called at 10kHz (100us period)
 void IRAM_ATTR MotionPlanner::stepTimerISR(void* arg) {
     MotionPlanner* planner = static_cast<MotionPlanner*>(arg);
     planner->handleStepTimer();

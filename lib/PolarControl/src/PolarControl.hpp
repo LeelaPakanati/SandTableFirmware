@@ -18,12 +18,12 @@
 
 // Tuning settings structures
 struct MotionSettings {
-  double rMaxVelocity = 10.0;   // mm/s
-  double rMaxAccel = 20.0;      // mm/s²
-  double rMaxJerk = 30.0;       // mm/s³
-  double tMaxVelocity = 0.25;   // rad/s
-  double tMaxAccel = 1.0;       // rad/s²
-  double tMaxJerk = 5.0;        // rad/s³
+  float rMaxVelocity = 10.0f;   // mm/s
+  float rMaxAccel = 20.0f;      // mm/s²
+  float rMaxJerk = 30.0f;       // mm/s³
+  float tMaxVelocity = 0.25f;   // rad/s
+  float tMaxAccel = 1.0f;       // rad/s²
+  float tMaxJerk = 5.0f;        // rad/s³
 };
 
 struct DriverSettings {
@@ -72,7 +72,7 @@ public:
   bool start(std::unique_ptr<PosGen> posGen);
   bool startClearing(std::unique_ptr<PosGen> posGen);
   bool loadAndRunFile(String filePath);
-  bool loadAndRunFile(String filePath, double maxRho);
+  bool loadAndRunFile(String filePath, float maxRho);
   bool pause();
   bool resume();
   bool stop();
@@ -87,7 +87,7 @@ public:
   PolarCord_t getCurrentPosition() const;
   PolarCord_t getActualPosition();
   uint32_t getSegmentsCompleted() const { return m_planner.getCompletedCount(); }
-  double getMaxRho() const { return R_MAX; }
+  float getMaxRho() const { return R_MAX; }
   int getProgressPercent() const;
 
   void getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const { m_planner.getDiagnostics(queueDepth, underruns); }
@@ -122,13 +122,13 @@ private:
   struct FileCommand {
       enum Type { CMD_LOAD, CMD_STOP } type;
       char filename[64];
-      double maxRho;
+      float maxRho;
   };
 
   static void fileReadTask(void* arg);
 
   // Physical constants
-  static constexpr double R_MAX = 450.0;
+  static constexpr float R_MAX = 450.0f;
   static constexpr float R_SENSE = 0.12f;  // Sense resistor in ohms
 
   // These are calculated based on current microstep settings

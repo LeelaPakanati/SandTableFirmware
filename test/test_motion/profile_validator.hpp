@@ -8,11 +8,11 @@
 
 struct ValidationResult {
     bool passed;
-    double maxVelocity;
-    double maxAccel;
-    double maxJerk;
-    double finalPosition;
-    double finalVelocity;
+    float maxVelocity;
+    float maxAccel;
+    float maxJerk;
+    float finalPosition;
+    float finalVelocity;
     std::string errorMessage;
 };
 
@@ -22,46 +22,46 @@ public:
 
     // Validate an S-curve profile against limits
     ValidationResult validate(const SCurve::Profile& profile,
-                              double expectedDistance,
-                              double vMax, double aMax, double jMax,
-                              double tolerance = 0.01) {
+                              float expectedDistance,
+                              float vMax, float aMax, float jMax,
+                              float tolerance = 0.01f) {
         ValidationResult result;
         result.passed = true;
-        result.maxVelocity = 0;
-        result.maxAccel = 0;
+        result.maxVelocity = 0.0f;
+        result.maxAccel = 0.0f;
         result.maxJerk = jMax;  // Jerk is applied discretely at phase boundaries
-        result.finalPosition = 0;
-        result.finalVelocity = 0;
+        result.finalPosition = 0.0f;
+        result.finalVelocity = 0.0f;
 
-        if (profile.totalTime <= 0 && expectedDistance > 0.0001) {
+        if (profile.totalTime <= 0.0f && expectedDistance > 0.0001f) {
             result.passed = false;
             result.errorMessage = "Zero duration for non-zero distance";
             return result;
         }
 
         // Sample profile at many points
-        int numSamples = std::max(100, (int)(profile.totalTime * 10000));
-        double dt = profile.totalTime / numSamples;
+        int numSamples = std::max(100, (int)(profile.totalTime * 10000.0f));
+        float dt = profile.totalTime / numSamples;
 
-        double prevVel = profile.v[0];
-        double prevAccel = 0;
-        double prevPos = 0;
+        float prevVel = profile.v[0];
+        float prevAccel = 0.0f;
+        float prevPos = 0.0f;
 
         for (int i = 0; i <= numSamples; i++) {
-            double t = i * dt;
+            float t = i * dt;
 
-            double pos = SCurve::getPosition(profile, t);
-            double vel = SCurve::getVelocity(profile, t);
-            double accel = SCurve::getAcceleration(profile, t);
+            float pos = SCurve::getPosition(profile, t);
+            float vel = SCurve::getVelocity(profile, t);
+            float accel = SCurve::getAcceleration(profile, t);
 
             // Track maximums
-            result.maxVelocity = std::max(result.maxVelocity, std::abs(vel));
-            result.maxAccel = std::max(result.maxAccel, std::abs(accel));
+            result.maxVelocity = std::max(result.maxVelocity, fabsf(vel));
+            result.maxAccel = std::max(result.maxAccel, fabsf(accel));
 
             // Estimate jerk from acceleration change
-            if (i > 0 && dt > 0) {
-                double jerk = (accel - prevAccel) / dt;
-                result.maxJerk = std::max(result.maxJerk, std::abs(jerk));
+            if (i > 0 && dt > 0.0f) {
+                float jerk = (accel - prevAccel) / dt;
+                result.maxJerk = std::max(result.maxJerk, fabsf(jerk));
             }
 
             prevVel = vel;
@@ -73,28 +73,28 @@ public:
         result.finalVelocity = prevVel;
 
         // Check velocity limit
-        if (result.maxVelocity > vMax * (1.0 + tolerance)) {
+        if (result.maxVelocity > vMax * (1.0f + tolerance)) {
             result.passed = false;
             result.errorMessage += "Velocity exceeded: " + std::to_string(result.maxVelocity) +
                                    " > " + std::to_string(vMax) + ". ";
         }
 
         // Check acceleration limit
-        if (result.maxAccel > aMax * (1.0 + tolerance)) {
+        if (result.maxAccel > aMax * (1.0f + tolerance)) {
             result.passed = false;
             result.errorMessage += "Acceleration exceeded: " + std::to_string(result.maxAccel) +
                                    " > " + std::to_string(aMax) + ". ";
         }
 
         // Check jerk limit (with more tolerance due to estimation)
-        if (result.maxJerk > jMax * (1.0 + tolerance * 2)) {
+        if (result.maxJerk > jMax * (1.0f + tolerance * 2.0f)) {
             result.passed = false;
             result.errorMessage += "Jerk exceeded: " + std::to_string(result.maxJerk) +
                                    " > " + std::to_string(jMax) + ". ";
         }
 
         // Check final position
-        if (std::abs(result.finalPosition - expectedDistance) > expectedDistance * tolerance + 0.001) {
+        if (fabsf(result.finalPosition - expectedDistance) > expectedDistance * tolerance + 0.001f) {
             result.passed = false;
             result.errorMessage += "Position error: " + std::to_string(result.finalPosition) +
                                    " != " + std::to_string(expectedDistance) + ". ";
@@ -118,7 +118,7 @@ public:
         };
 
         for (int i = 0; i < 7; i++) {
-            if (profile.t[i] > 0.0001) {
+            if (profile.t[i] > 0.0001f) {
                 std::cout << "  Phase " << phaseNames[i] << ": "
                           << profile.t[i] << "s, ends at t=" << profile.tEnd[i]
                           << ", pos=" << profile.posEnd[i] << std::endl;

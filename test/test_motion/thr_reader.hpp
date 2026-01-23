@@ -12,15 +12,15 @@
 // rho: 0-1 scaled (multiply by maxRho for actual mm)
 
 struct ThrPosition {
-    double theta;  // radians
-    double rho;    // 0-1 normalized
+    float theta;  // radians
+    float rho;    // 0-1 normalized
 };
 
 class ThrReader {
 public:
-    ThrReader() : m_maxRho(450.0), m_currentIndex(0) {}
+    ThrReader() : m_maxRho(450.0f), m_currentIndex(0) {}
 
-    void setMaxRho(double maxRho) {
+    void setMaxRho(float maxRho) {
         m_maxRho = maxRho;
     }
 
@@ -45,7 +45,7 @@ public:
             }
 
             std::istringstream iss(line);
-            double theta, rho;
+            float theta, rho;
             if (!(iss >> theta >> rho)) {
                 std::cerr << "Parse error at line " << lineNum << ": " << line << std::endl;
                 continue;
@@ -60,10 +60,10 @@ public:
 
     // Get next position in physical units (theta in rad, rho in mm)
     // Returns NaN when end is reached
-    bool getNextPosition(double& theta, double& rho) {
+    bool getNextPosition(float& theta, float& rho) {
         if (m_currentIndex >= m_positions.size()) {
-            theta = std::nan("");
-            rho = std::nan("");
+            theta = std::nanf("");
+            rho = std::nanf("");
             return false;
         }
 
@@ -86,7 +86,7 @@ public:
     }
 
     // Get position at specific index
-    bool getPositionAt(size_t index, double& theta, double& rho) const {
+    bool getPositionAt(size_t index, float& theta, float& rho) const {
         if (index >= m_positions.size()) {
             return false;
         }
@@ -97,6 +97,6 @@ public:
 
 private:
     std::vector<ThrPosition> m_positions;
-    double m_maxRho;
+    float m_maxRho;
     size_t m_currentIndex;
 };

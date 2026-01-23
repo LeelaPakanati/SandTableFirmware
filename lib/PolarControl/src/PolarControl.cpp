@@ -80,7 +80,7 @@ void PolarControl::begin() {
 }
 
 void PolarControl::updateSpeedSettings() {
-    double speedFactor = m_speed / 10.0;
+    float speedFactor = m_speed / 10.0f;
     m_planner.setSpeedMultiplier(speedFactor);
 }
 
@@ -265,7 +265,7 @@ bool PolarControl::loadAndRunFile(String filePath) {
     return loadAndRunFile(filePath, R_MAX);
 }
 
-bool PolarControl::loadAndRunFile(String filePath, double maxRho) {
+bool PolarControl::loadAndRunFile(String filePath, float maxRho) {
     xSemaphoreTake(m_mutex, portMAX_DELAY);
 
     if (m_state != IDLE) {
@@ -361,14 +361,14 @@ PolarControl::State_t PolarControl::getState() {
 }
 
 PolarCord_t PolarControl::getCurrentPosition() const {
-    double theta, rho;
+    float theta, rho;
     // Note: casting away const for the planner call - it's thread-safe
     const_cast<MotionPlanner&>(m_planner).getCurrentPosition(theta, rho);
     return {theta, rho};
 }
 
 PolarCord_t PolarControl::getActualPosition() {
-    double theta, rho;
+    float theta, rho;
     m_planner.getCurrentPosition(theta, rho);
     return {theta, rho};
 }
@@ -855,9 +855,9 @@ void PolarControl::testThetaContinuous() {
     if (m_state != IDLE) return;
     LOG("Starting theta continuous test...\r\n");
 
-    double currentTheta, currentRho;
+    float currentTheta, currentRho;
     m_planner.getCurrentPosition(currentTheta, currentRho);
-    double testRho = (currentRho > 50 && currentRho < R_MAX - 50) ? currentRho : R_MAX / 2;
+    float testRho = (currentRho > 50.0f && currentRho < R_MAX - 50.0f) ? currentRho : R_MAX / 2.0f;
 
     resetTheta();
     start(std_patch::make_unique<TestThetaContinuousGen>(testRho));
@@ -867,9 +867,9 @@ void PolarControl::testThetaStress() {
     if (m_state != IDLE) return;
     LOG("Starting theta stress test...\r\n");
 
-    double currentTheta, currentRho;
+    float currentTheta, currentRho;
     m_planner.getCurrentPosition(currentTheta, currentRho);
-    double testRho = (currentRho > 50 && currentRho < R_MAX - 50) ? currentRho : R_MAX / 2;
+    float testRho = (currentRho > 50.0f && currentRho < R_MAX - 50.0f) ? currentRho : R_MAX / 2.0f;
 
     resetTheta();
     start(std_patch::make_unique<TestThetaStressGen>(testRho));

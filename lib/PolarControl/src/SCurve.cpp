@@ -2,27 +2,27 @@
 #include <algorithm>
 
 // Distance during jerk phase: d = v0*t + 0.5*a0*t² + (1/6)*j*t³
-double SCurve::jerkPhaseDistance(double v0, double a0, double j, double t) {
-    return v0 * t + 0.5 * a0 * t * t + (1.0 / 6.0) * j * t * t * t;
+float SCurve::jerkPhaseDistance(float v0, float a0, float j, float t) {
+    return v0 * t + 0.5f * a0 * t * t + (1.0f / 6.0f) * j * t * t * t;
 }
 
 // Distance during constant acceleration: d = v0*t + 0.5*a*t²
-double SCurve::constAccelDistance(double v0, double a, double t) {
-    return v0 * t + 0.5 * a * t * t;
+float SCurve::constAccelDistance(float v0, float a, float t) {
+    return v0 * t + 0.5f * a * t * t;
 }
 
 // Velocity after jerk phase: v = v0 + a0*t + 0.5*j*t²
-double SCurve::jerkPhaseVelocity(double v0, double a0, double j, double t) {
-    return v0 + a0 * t + 0.5 * j * t * t;
+float SCurve::jerkPhaseVelocity(float v0, float a0, float j, float t) {
+    return v0 + a0 * t + 0.5f * j * t * t;
 }
 
 bool SCurve::calculate(
-    double distance,
-    double vStart,
-    double vEnd,
-    double vMax,
-    double aMax,
-    double jMax,
+    float distance,
+    float vStart,
+    float vEnd,
+    float vMax,
+    float aMax,
+    float jMax,
     Profile& p
 ) {
     // Store constraints
@@ -31,20 +31,20 @@ bool SCurve::calculate(
     p.maxVelocity = vMax;
 
     // Handle zero or negative distance
-    if (distance <= 0) {
+    if (distance <= 0.0f) {
         // Zero-duration profile
         for (int i = 0; i < 7; i++) {
-            p.t[i] = 0;
-            p.tEnd[i] = 0;
-            p.posEnd[i] = 0;
+            p.t[i] = 0.0f;
+            p.tEnd[i] = 0.0f;
+            p.posEnd[i] = 0.0f;
         }
         for (int i = 0; i < 8; i++) {
             p.v[i] = vStart;
-            p.a[i] = 0;
+            p.a[i] = 0.0f;
         }
         p.v[7] = vEnd;
-        p.totalTime = 0;
-        p.totalDistance = 0;
+        p.totalTime = 0.0f;
+        p.totalDistance = 0.0f;
         return true;
     }
 
@@ -53,71 +53,71 @@ bool SCurve::calculate(
     vEnd = std::min(vEnd, vMax);
 
     // Time to reach max acceleration with jerk limit
-    double tJerk = aMax / jMax;
+    float tJerk = aMax / jMax;
 
     // Velocity change during one jerk phase (phases 1 or 3)
-    double vJerk = 0.5 * jMax * tJerk * tJerk;
+    float vJerk = 0.5f * jMax * tJerk * tJerk;
 
     // Velocity change during accel ramp (phases 1+2+3) if we reach max accel
     // This is the minimum velocity change if we use full acceleration
-    double vAccelMin = 2.0 * vJerk;  // Just the jerk phases, no const accel
+    float vAccelMin = 2.0f * vJerk;  // Just the jerk phases, no const accel
 
     // Calculate required velocity change for accel and decel
-    double vCruise = vMax;
+    float vCruise = vMax;
 
     // Check if we can reach cruise velocity
-    double vAccelNeeded = vCruise - vStart;
-    double vDecelNeeded = vCruise - vEnd;
+    float vAccelNeeded = vCruise - vStart;
+    float vDecelNeeded = vCruise - vEnd;
 
     // If we can't reach cruise, find the peak velocity
     // This is a simplified calculation - find max achievable velocity
-    if (vAccelNeeded + vDecelNeeded > 0) {
+    if (vAccelNeeded + vDecelNeeded > 0.0f) {
         // Distance needed for symmetric accel/decel with full jerk phases
-        double dAccelFull = vStart * (2.0 * tJerk) + 2.0 * jerkPhaseDistance(0, 0, jMax, tJerk);
-        double dDecelFull = vEnd * (2.0 * tJerk) + 2.0 * jerkPhaseDistance(0, 0, jMax, tJerk);
+        float dAccelFull = vStart * (2.0f * tJerk) + 2.0f * jerkPhaseDistance(0.0f, 0.0f, jMax, tJerk);
+        float dDecelFull = vEnd * (2.0f * tJerk) + 2.0f * jerkPhaseDistance(0.0f, 0.0f, jMax, tJerk);
 
         // Start with max velocity and reduce if needed
         while (vCruise > std::max(vStart, vEnd)) {
             // Calculate distances for acceleration and deceleration phases
-            double accelDist = 0;
-            double decelDist = 0;
+            float accelDist = 0.0f;
+            float decelDist = 0.0f;
 
             // Acceleration phase distances
-            double deltaVAccel = vCruise - vStart;
-            if (deltaVAccel > 0) {
+            float deltaVAccel = vCruise - vStart;
+            if (deltaVAccel > 0.0f) {
                 if (deltaVAccel <= vAccelMin) {
                     // Can't reach max accel, reduced jerk profile
                     // Must calculate both jerk phases separately as they have different starting conditions
-                    double tJ = sqrt(std::max(0.0, deltaVAccel / jMax));
-                    double v1 = vStart + 0.5 * jMax * tJ * tJ;  // velocity after phase 1
-                    double a1 = jMax * tJ;                       // accel after phase 1
-                    accelDist = jerkPhaseDistance(vStart, 0, jMax, tJ);    // phase 1
+                    float tJ = sqrtf(std::max(0.0f, deltaVAccel / jMax));
+                    float v1 = vStart + 0.5f * jMax * tJ * tJ;  // velocity after phase 1
+                    float a1 = jMax * tJ;                       // accel after phase 1
+                    accelDist = jerkPhaseDistance(vStart, 0.0f, jMax, tJ);    // phase 1
                     accelDist += jerkPhaseDistance(v1, a1, -jMax, tJ);     // phase 3
                 } else {
                     // Full profile with const accel phase
-                    double vConstAccel = deltaVAccel - vAccelMin;
-                    double tConstAccel = vConstAccel / aMax;
-                    accelDist = jerkPhaseDistance(vStart, 0, jMax, tJerk);  // Phase 1
+                    float vConstAccel = deltaVAccel - vAccelMin;
+                    float tConstAccel = vConstAccel / aMax;
+                    accelDist = jerkPhaseDistance(vStart, 0.0f, jMax, tJerk);  // Phase 1
                     accelDist += constAccelDistance(vStart + vJerk, aMax, tConstAccel);  // Phase 2
                     accelDist += jerkPhaseDistance(vStart + vJerk + vConstAccel, aMax, -jMax, tJerk);  // Phase 3
                 }
             }
 
             // Deceleration phase distances
-            double deltaVDecel = vCruise - vEnd;
-            if (deltaVDecel > 0) {
+            float deltaVDecel = vCruise - vEnd;
+            if (deltaVDecel > 0.0f) {
                 if (deltaVDecel <= vAccelMin) {
                     // Can't reach max decel, reduced jerk profile
                     // Must calculate both jerk phases separately as they have different starting conditions
-                    double tJ = sqrt(std::max(0.0, deltaVDecel / jMax));
-                    double v5 = vCruise - 0.5 * jMax * tJ * tJ;  // velocity after phase 5
-                    double a5 = -jMax * tJ;                       // accel after phase 5
-                    decelDist = jerkPhaseDistance(vCruise, 0, -jMax, tJ);   // phase 5
+                    float tJ = sqrtf(std::max(0.0f, deltaVDecel / jMax));
+                    float v5 = vCruise - 0.5f * jMax * tJ * tJ;  // velocity after phase 5
+                    float a5 = -jMax * tJ;                       // accel after phase 5
+                    decelDist = jerkPhaseDistance(vCruise, 0.0f, -jMax, tJ);   // phase 5
                     decelDist += jerkPhaseDistance(v5, a5, jMax, tJ);       // phase 7
                 } else {
-                    double vConstDecel = deltaVDecel - vAccelMin;
-                    double tConstDecel = vConstDecel / aMax;
-                    decelDist = jerkPhaseDistance(vCruise, 0, -jMax, tJerk);  // Phase 5
+                    float vConstDecel = deltaVDecel - vAccelMin;
+                    float tConstDecel = vConstDecel / aMax;
+                    decelDist = jerkPhaseDistance(vCruise, 0.0f, -jMax, tJerk);  // Phase 5
                     decelDist += constAccelDistance(vCruise - vJerk, -aMax, tConstDecel);  // Phase 6
                     decelDist += jerkPhaseDistance(vEnd + vJerk, -aMax, jMax, tJerk);  // Phase 7
                 }
@@ -128,7 +128,7 @@ bool SCurve::calculate(
             }
 
             // Reduce by 1% of vMax (scales with units)
-            vCruise -= vMax * 0.01;
+            vCruise -= vMax * 0.01f;
             if (vCruise <= std::max(vStart, vEnd)) {
                 vCruise = std::max(vStart, vEnd);
                 break;
@@ -139,28 +139,28 @@ bool SCurve::calculate(
     // Now calculate actual profile with determined cruise velocity
     // Initialize all phases to zero
     for (int i = 0; i < 7; i++) {
-        p.t[i] = 0;
-        p.tEnd[i] = 0;
-        p.posEnd[i] = 0;
+        p.t[i] = 0.0f;
+        p.tEnd[i] = 0.0f;
+        p.posEnd[i] = 0.0f;
     }
     for (int i = 0; i < 8; i++) {
-        p.v[i] = 0;
-        p.a[i] = 0;
+        p.v[i] = 0.0f;
+        p.a[i] = 0.0f;
     }
 
     p.v[0] = vStart;
-    p.a[0] = 0;
+    p.a[0] = 0.0f;
 
-    double pos = 0;
-    double currentTime = 0;
+    float pos = 0.0f;
+    float currentTime = 0.0f;
 
     // Phase 1: Jerk+ (accelerating)
-    double deltaVAccel = vCruise - vStart;
-    if (deltaVAccel > 0.001) {
+    float deltaVAccel = vCruise - vStart;
+    if (deltaVAccel > 0.001f) {
         if (deltaVAccel <= vAccelMin) {
             // Reduced jerk - can't reach max accel
-            p.t[0] = sqrt(std::max(0.0, deltaVAccel / jMax));
-            p.t[1] = 0;
+            p.t[0] = sqrtf(std::max(0.0f, deltaVAccel / jMax));
+            p.t[1] = 0.0f;
             p.t[2] = p.t[0];
         } else {
             p.t[0] = tJerk;
@@ -171,9 +171,9 @@ bool SCurve::calculate(
 
     // Calculate velocities and positions through accel phases
     // Phase 1
-    p.v[1] = jerkPhaseVelocity(p.v[0], 0, jMax, p.t[0]);
+    p.v[1] = jerkPhaseVelocity(p.v[0], 0.0f, jMax, p.t[0]);
     p.a[1] = jMax * p.t[0];
-    pos += jerkPhaseDistance(p.v[0], 0, jMax, p.t[0]);
+    pos += jerkPhaseDistance(p.v[0], 0.0f, jMax, p.t[0]);
     currentTime += p.t[0];
     p.tEnd[0] = currentTime;
     p.posEnd[0] = pos;
@@ -188,23 +188,23 @@ bool SCurve::calculate(
 
     // Phase 3
     p.v[3] = jerkPhaseVelocity(p.v[2], p.a[2], -jMax, p.t[2]);
-    p.a[3] = 0;  // Should be zero at end of accel
+    p.a[3] = 0.0f;  // Should be zero at end of accel
     pos += jerkPhaseDistance(p.v[2], p.a[2], -jMax, p.t[2]);
     currentTime += p.t[2];
     p.tEnd[2] = currentTime;
     p.posEnd[2] = pos;
 
     // Phase 4: Cruise
-    double cruiseDist = distance - pos;
+    float cruiseDist = distance - pos;
 
     // Calculate decel distance
-    double decelDist = 0;
-    double deltaVDecel = vCruise - vEnd;
-    double t5, t6, t7;
-    if (deltaVDecel > 0.001) {
+    float decelDist = 0.0f;
+    float deltaVDecel = vCruise - vEnd;
+    float t5, t6, t7;
+    if (deltaVDecel > 0.001f) {
         if (deltaVDecel <= vAccelMin) {
-            t5 = sqrt(std::max(0.0, deltaVDecel / jMax));
-            t6 = 0;
+            t5 = sqrtf(std::max(0.0f, deltaVDecel / jMax));
+            t6 = 0.0f;
             t7 = t5;
         } else {
             t5 = tJerk;
@@ -213,23 +213,23 @@ bool SCurve::calculate(
         }
 
         // Estimate decel distance
-        double v5_tmp = jerkPhaseVelocity(vCruise, 0, -jMax, t5);
-        double decelDist_tmp = jerkPhaseDistance(vCruise, 0, -jMax, t5);
-        double a5_tmp = -jMax * t5;
-        double v6_tmp = v5_tmp + a5_tmp * t6;
+        float v5_tmp = jerkPhaseVelocity(vCruise, 0.0f, -jMax, t5);
+        float decelDist_tmp = jerkPhaseDistance(vCruise, 0.0f, -jMax, t5);
+        float a5_tmp = -jMax * t5;
+        float v6_tmp = v5_tmp + a5_tmp * t6;
         decelDist_tmp += constAccelDistance(v5_tmp, a5_tmp, t6);
         decelDist_tmp += jerkPhaseDistance(v6_tmp, a5_tmp, jMax, t7);
         decelDist = decelDist_tmp;
     } else {
-        t5 = t6 = t7 = 0;
+        t5 = t6 = t7 = 0.0f;
     }
 
     cruiseDist -= decelDist;
-    if (cruiseDist < 0) cruiseDist = 0;
+    if (cruiseDist < 0.0f) cruiseDist = 0.0f;
 
-    p.t[3] = (vCruise > 0.001) ? cruiseDist / vCruise : 0;
+    p.t[3] = (vCruise > 0.001f) ? cruiseDist / vCruise : 0.0f;
     p.v[4] = vCruise;
-    p.a[4] = 0;
+    p.a[4] = 0.0f;
     pos += cruiseDist;
     currentTime += p.t[3];
     p.tEnd[3] = currentTime;
@@ -241,9 +241,9 @@ bool SCurve::calculate(
     p.t[6] = t7;
 
     // Phase 5
-    p.v[5] = jerkPhaseVelocity(p.v[4], 0, -jMax, p.t[4]);
+    p.v[5] = jerkPhaseVelocity(p.v[4], 0.0f, -jMax, p.t[4]);
     p.a[5] = -jMax * p.t[4];
-    pos += jerkPhaseDistance(p.v[4], 0, -jMax, p.t[4]);
+    pos += jerkPhaseDistance(p.v[4], 0.0f, -jMax, p.t[4]);
     currentTime += p.t[4];
     p.tEnd[4] = currentTime;
     p.posEnd[4] = pos;
@@ -258,7 +258,7 @@ bool SCurve::calculate(
 
     // Phase 7
     p.v[7] = vEnd;
-    p.a[7] = 0;
+    p.a[7] = 0.0f;
     pos += jerkPhaseDistance(p.v[6], p.a[6], jMax, p.t[6]);
     currentTime += p.t[6];
     p.tEnd[6] = currentTime;
@@ -270,13 +270,13 @@ bool SCurve::calculate(
     return true;
 }
 
-double SCurve::getVelocity(const Profile& p, double t) {
-    if (t <= 0) return p.v[0];
+float SCurve::getVelocity(const Profile& p, float t) {
+    if (t <= 0.0f) return p.v[0];
     if (t >= p.totalTime) return p.v[7];
 
     // Find which phase we're in
     int phase = 0;
-    double tPhase = t;
+    float tPhase = t;
     for (int i = 0; i < 7; i++) {
         if (t <= p.tEnd[i]) {
             phase = i;
@@ -285,31 +285,31 @@ double SCurve::getVelocity(const Profile& p, double t) {
         }
     }
 
-    double v0 = p.v[phase];
-    double a0 = p.a[phase];
-    double j = 0;
+    float v0 = p.v[phase];
+    float a0 = p.a[phase];
+    float j = 0.0f;
 
     switch (phase) {
         case 0: j = p.jerk; break;       // Jerk+
-        case 1: j = 0; break;            // Const accel
+        case 1: j = 0.0f; break;         // Const accel
         case 2: j = -p.jerk; break;      // Jerk-
-        case 3: j = 0; break;            // Cruise
+        case 3: j = 0.0f; break;         // Cruise
         case 4: j = -p.jerk; break;      // Jerk-
-        case 5: j = 0; break;            // Const decel
+        case 5: j = 0.0f; break;         // Const decel
         case 6: j = p.jerk; break;       // Jerk+
     }
 
     return jerkPhaseVelocity(v0, a0, j, tPhase);
 }
 
-double SCurve::getPosition(const Profile& p, double t) {
-    if (t <= 0) return 0;
+float SCurve::getPosition(const Profile& p, float t) {
+    if (t <= 0.0f) return 0.0f;
     if (t >= p.totalTime) return p.totalDistance;
 
     // Find which phase we're in
     int phase = 0;
-    double tPhase = t;
-    double posAtStart = 0;
+    float tPhase = t;
+    float posAtStart = 0.0f;
 
     for (int i = 0; i < 7; i++) {
         if (t <= p.tEnd[i]) {
@@ -319,40 +319,40 @@ double SCurve::getPosition(const Profile& p, double t) {
                 posAtStart = p.posEnd[i - 1];
             } else {
                 tPhase = t;
-                posAtStart = 0;
+                posAtStart = 0.0f;
             }
             break;
         }
     }
 
-    double v0 = p.v[phase];
-    double a0 = p.a[phase];
-    double j = 0;
+    float v0 = p.v[phase];
+    float a0 = p.a[phase];
+    float j = 0.0f;
 
     switch (phase) {
         case 0: j = p.jerk; break;
-        case 1: j = 0; break;
+        case 1: j = 0.0f; break;
         case 2: j = -p.jerk; break;
-        case 3: j = 0; break;
+        case 3: j = 0.0f; break;
         case 4: j = -p.jerk; break;
-        case 5: j = 0; break;
+        case 5: j = 0.0f; break;
         case 6: j = p.jerk; break;
     }
 
-    if (j != 0) {
+    if (j != 0.0f) {
         return posAtStart + jerkPhaseDistance(v0, a0, j, tPhase);
     } else {
         return posAtStart + constAccelDistance(v0, a0, tPhase);
     }
 }
 
-double SCurve::getAcceleration(const Profile& p, double t) {
-    if (t <= 0) return p.a[0];
+float SCurve::getAcceleration(const Profile& p, float t) {
+    if (t <= 0.0f) return p.a[0];
     if (t >= p.totalTime) return p.a[7];
 
     // Find which phase we're in
     int phase = 0;
-    double tPhase = t;
+    float tPhase = t;
     for (int i = 0; i < 7; i++) {
         if (t <= p.tEnd[i]) {
             phase = i;
@@ -361,82 +361,82 @@ double SCurve::getAcceleration(const Profile& p, double t) {
         }
     }
 
-    double a0 = p.a[phase];
-    double j = 0;
+    float a0 = p.a[phase];
+    float j = 0.0f;
 
     switch (phase) {
         case 0: j = p.jerk; break;
-        case 1: j = 0; break;
+        case 1: j = 0.0f; break;
         case 2: j = -p.jerk; break;
-        case 3: j = 0; break;
+        case 3: j = 0.0f; break;
         case 4: j = -p.jerk; break;
-        case 5: j = 0; break;
+        case 5: j = 0.0f; break;
         case 6: j = p.jerk; break;
     }
 
     return a0 + j * tPhase;
 }
 
-double SCurve::decelerationDistance(double vStart, double vEnd, double aMax, double jMax) {
-    if (vStart <= vEnd) return 0;
+float SCurve::decelerationDistance(float vStart, float vEnd, float aMax, float jMax) {
+    if (vStart <= vEnd) return 0.0f;
 
-    double deltaV = vStart - vEnd;
+    float deltaV = vStart - vEnd;
 
     // Time to reach max deceleration with jerk limit
-    double tJerk = aMax / jMax;
+    float tJerk = aMax / jMax;
 
     // Velocity change during one jerk phase
-    double vJerk = 0.5 * jMax * tJerk * tJerk;
+    float vJerk = 0.5f * jMax * tJerk * tJerk;
 
     // Minimum velocity change (just jerk phases, no constant decel)
-    double vDecelMin = 2.0 * vJerk;
+    float vDecelMin = 2.0f * vJerk;
 
-    double distance = 0;
+    float distance = 0.0f;
 
     if (deltaV <= vDecelMin) {
         // Reduced jerk profile - can't reach max deceleration
-        double tJ = sqrt(std::max(0.0, deltaV / jMax));
-        double v5 = vStart - 0.5 * jMax * tJ * tJ;
-        double a5 = -jMax * tJ;
-        distance = jerkPhaseDistance(vStart, 0, -jMax, tJ);
+        float tJ = sqrtf(std::max(0.0f, deltaV / jMax));
+        float v5 = vStart - 0.5f * jMax * tJ * tJ;
+        float a5 = -jMax * tJ;
+        distance = jerkPhaseDistance(vStart, 0.0f, -jMax, tJ);
         distance += jerkPhaseDistance(v5, a5, jMax, tJ);
     } else {
         // Full profile with constant deceleration phase
-        double vConstDecel = deltaV - vDecelMin;
-        double tConstDecel = vConstDecel / aMax;
+        float vConstDecel = deltaV - vDecelMin;
+        float tConstDecel = vConstDecel / aMax;
 
         // Phase 5: jerk- (building deceleration)
-        distance = jerkPhaseDistance(vStart, 0, -jMax, tJerk);
+        distance = jerkPhaseDistance(vStart, 0.0f, -jMax, tJerk);
 
         // Phase 6: constant deceleration
-        double v5 = vStart - vJerk;
+        float v5 = vStart - vJerk;
         distance += constAccelDistance(v5, -aMax, tConstDecel);
 
         // Phase 7: jerk+ (reducing deceleration)
-        double v6 = v5 - vConstDecel;
+        float v6 = v5 - vConstDecel;
         distance += jerkPhaseDistance(v6, -aMax, jMax, tJerk);
     }
 
     return distance;
 }
 
-double SCurve::maxAchievableEntryVelocity(double distance, double vEnd, double vMax, double aMax, double jMax) {
-    if (distance <= 0) return vEnd;
+float SCurve::maxAchievableEntryVelocity(float distance, float vEnd, float vMax, float aMax, float jMax) {
+    if (distance <= 0.0f) return vEnd;
 
     // Binary search for max vStart that can decelerate to vEnd within distance
-    double vLow = vEnd;
-    double vHigh = vMax;
+    float vLow = vEnd;
+    float vHigh = vMax;
 
     // Check if we can achieve max velocity
-    double distAtMax = decelerationDistance(vMax, vEnd, aMax, jMax);
+    float distAtMax = decelerationDistance(vMax, vEnd, aMax, jMax);
     if (distAtMax <= distance) {
         return vMax;
     }
 
     // Binary search
     for (int i = 0; i < 20; i++) {  // ~6 decimal places precision
-        double vMid = (vLow + vHigh) * 0.5;
-        double dist = decelerationDistance(vMid, vEnd, aMax, jMax);
+        float vMid = (vLow + vHigh) * 0.5f;
+        float dist = decelerationDistance(vMid, vEnd, aMax, jMax);
 
         if (dist <= distance) {
             vLow = vMid;
@@ -448,81 +448,7 @@ double SCurve::maxAchievableEntryVelocity(double distance, double vEnd, double v
     return vLow;
 }
 
-double SCurve::getPosition(const Profile& p, double t, int& phaseIdx) {
-    if (t <= 0) return 0;
-    if (t >= p.totalTime) {
-        phaseIdx = 6;
-        return p.totalDistance;
-    }
-
-    // Advance phase if needed
-    while (phaseIdx < 6 && t > p.tEnd[phaseIdx]) {
-        phaseIdx++;
-    }
-
-    // Determine local time and start pos
-    double tPhase;
-    double posAtStart;
-
-    if (phaseIdx > 0) {
-        tPhase = t - p.tEnd[phaseIdx - 1];
-        posAtStart = p.posEnd[phaseIdx - 1];
-    } else {
-        tPhase = t;
-        posAtStart = 0;
-    }
-
-    double v0 = p.v[phaseIdx];
-    double a0 = p.a[phaseIdx];
-    double j = 0;
-
-    switch (phaseIdx) {
-        case 0: j = p.jerk; break;
-        case 1: j = 0; break;
-        case 2: j = -p.jerk; break;
-        case 3: j = 0; break;
-        case 4: j = -p.jerk; break;
-        case 5: j = 0; break;
-        case 6: j = p.jerk; break;
-    }
-
-    if (j != 0) {
-        return posAtStart + jerkPhaseDistance(v0, a0, j, tPhase);
-    } else {
-        return posAtStart + constAccelDistance(v0, a0, tPhase);
-    }
-}
-
-// ============================================================================
-// Float-optimized versions for ESP32 FPU
-// The ESP32 FPU only supports single-precision float, so double operations
-// are emulated in software and ~3x slower.
-// ============================================================================
-
-void SCurve::toFloat(const Profile& src, ProfileF& dst) {
-    for (int i = 0; i < 7; i++) {
-        dst.tEnd[i] = (float)src.tEnd[i];
-        dst.posEnd[i] = (float)src.posEnd[i];
-    }
-    for (int i = 0; i < 8; i++) {
-        dst.v[i] = (float)src.v[i];
-        dst.a[i] = (float)src.a[i];
-    }
-    dst.totalTime = (float)src.totalTime;
-    dst.totalDistance = (float)src.totalDistance;
-    dst.jerk = (float)src.jerk;
-}
-
-// Inline float versions of distance calculations
-static inline float jerkPhaseDistanceF(float v0, float a0, float j, float t) {
-    return v0 * t + 0.5f * a0 * t * t + (1.0f / 6.0f) * j * t * t * t;
-}
-
-static inline float constAccelDistanceF(float v0, float a, float t) {
-    return v0 * t + 0.5f * a * t * t;
-}
-
-float SCurve::getPositionF(const ProfileF& p, float t, int& phaseIdx) {
+float SCurve::getPosition(const Profile& p, float t, int& phaseIdx) {
     if (t <= 0.0f) return 0.0f;
     if (t >= p.totalTime) {
         phaseIdx = 6;
@@ -561,8 +487,8 @@ float SCurve::getPositionF(const ProfileF& p, float t, int& phaseIdx) {
     }
 
     if (j != 0.0f) {
-        return posAtStart + jerkPhaseDistanceF(v0, a0, j, tPhase);
+        return posAtStart + jerkPhaseDistance(v0, a0, j, tPhase);
     } else {
-        return posAtStart + constAccelDistanceF(v0, a0, tPhase);
+        return posAtStart + constAccelDistance(v0, a0, tPhase);
     }
 }

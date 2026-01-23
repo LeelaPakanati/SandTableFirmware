@@ -23,7 +23,7 @@
 // Configuration constants
 static constexpr int SEGMENT_BUFFER_SIZE = 16;
 static constexpr int STEP_QUEUE_SIZE = 512;
-static constexpr double MIN_SEGMENT_DURATION = 0.010;  // 10ms minimum
+static constexpr float MIN_SEGMENT_DURATION = 0.010f;  // 10ms minimum
 static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
 static constexpr uint32_t STEP_QUEUE_HORIZON_US = 50000;  // 50ms lookahead
 
@@ -32,28 +32,27 @@ struct AxisProfile {
     int32_t startSteps;        // Starting position in steps
     int32_t targetSteps;       // Absolute target in steps
     int32_t deltaSteps;        // Signed delta from start
-    double deltaUnits;         // Delta in physical units (rad or mm)
+    float deltaUnits;          // Delta in physical units (rad or mm)
     int8_t direction;          // +1 or -1 (0 if no motion)
-    SCurve::Profile profile;   // 7-phase S-curve (double precision for calculation)
-    SCurve::ProfileF profileF; // Float version for real-time evaluation (ESP32 FPU optimized)
-    float timeScaleF;          // Ratio: duration / profile.totalTime (float for FPU)
+    SCurve::Profile profile;   // 7-phase S-curve
+    float timeScale;           // Ratio: duration / profile.totalTime
 };
 
 // A motion segment with synchronized theta/rho profiles
 struct Segment {
-    double targetTheta;        // Target theta position (radians, unwrapped)
-    double targetRho;          // Target rho position (mm)
+    float targetTheta;         // Target theta position (radians, unwrapped)
+    float targetRho;           // Target rho position (mm)
 
     AxisProfile theta;         // Theta axis profile
     AxisProfile rho;           // Rho axis profile
 
-    double duration;           // Synchronized duration (same for both axes)
+    float duration;            // Synchronized duration (same for both axes)
 
     // Velocity continuity
-    double thetaEntryVel;      // Entry velocity for theta (rad/s)
-    double thetaExitVel;       // Exit velocity for theta (rad/s)
-    double rhoEntryVel;        // Entry velocity for rho (mm/s)
-    double rhoExitVel;         // Exit velocity for rho (mm/s)
+    float thetaEntryVel;       // Entry velocity for theta (rad/s)
+    float thetaExitVel;        // Exit velocity for theta (rad/s)
+    float rhoEntryVel;         // Entry velocity for rho (mm/s)
+    float rhoExitVel;          // Exit velocity for rho (mm/s)
 
     bool calculated;           // True if profile has been calculated
     bool executing;            // True if currently being executed
@@ -63,7 +62,7 @@ struct Segment {
     int rhoPhaseIdx = 0;
 
     // Generation state (to prevent duplicate steps)
-    float lastGenTimeF = 0.0f; // Float for ESP32 FPU optimization
+    float lastGenTime = 0.0f;
     int32_t lastGenThetaSteps = 0;
     int32_t lastGenRhoSteps = 0;
 };
@@ -87,12 +86,12 @@ public:
     // maxRho: maximum rho position in mm
     // rMaxVel/rMaxAccel/rMaxJerk: rho limits (mm/s, mm/s², mm/s³)
     // tMaxVel/tMaxAccel/tMaxJerk: theta limits (rad/s, rad/s², rad/s³)
-    void init(int stepsPerMmR, int stepsPerRadT, double maxRho,
-              double rMaxVel, double rMaxAccel, double rMaxJerk,
-              double tMaxVel, double tMaxAccel, double tMaxJerk);
+    void init(int stepsPerMmR, int stepsPerRadT, float maxRho,
+              float rMaxVel, float rMaxAccel, float rMaxJerk,
+              float tMaxVel, float tMaxAccel, float tMaxJerk);
 
     // Add a segment to the buffer (returns false if buffer full)
-    bool addSegment(double theta, double rho);
+    bool addSegment(float theta, float rho);
 
     // Recalculate profiles for all pending segments
     void recalculate();
@@ -117,17 +116,17 @@ public:
     bool isIdle() const;
 
     // Get current position in physical units
-    void getCurrentPosition(double& theta, double& rho) const;
+    void getCurrentPosition(float& theta, float& rho) const;
 
     // Reset theta to zero (current position becomes new origin)
     void resetTheta();
 
     // Set speed multiplier (0.1 to 1.0, scales velocity only)
-    void setSpeedMultiplier(double mult);
+    void setSpeedMultiplier(float mult);
 
     // Update motion limits without resetting positions (safe to call while running)
-    void setMotionLimits(double rMaxVel, double rMaxAccel, double rMaxJerk,
-                         double tMaxVel, double tMaxAccel, double tMaxJerk);
+    void setMotionLimits(float rMaxVel, float rMaxAccel, float rMaxJerk,
+                         float tMaxVel, float tMaxAccel, float tMaxJerk);
 
     // Signal end of pattern (causes deceleration to stop)
     void setEndOfPattern(bool ending);
@@ -145,14 +144,14 @@ private:
     // Physical parameters
     int m_stepsPerMmR;
     int m_stepsPerRadT;
-    double m_maxRho;
+    float m_maxRho;
 
     // Motion limits (base values before speed scaling)
-    double m_rMaxVel, m_rMaxAccel, m_rMaxJerk;
-    double m_tMaxVel, m_tMaxAccel, m_tMaxJerk;
+    float m_rMaxVel, m_rMaxAccel, m_rMaxJerk;
+    float m_tMaxVel, m_tMaxAccel, m_tMaxJerk;
 
     // Speed multiplier (applied to velocity only)
-    double m_speedMultiplier;
+    float m_speedMultiplier;
 
     // Segment ring buffer
     Segment m_segments[SEGMENT_BUFFER_SIZE];
@@ -173,8 +172,8 @@ private:
     std::atomic<int32_t> m_executedRSteps;
 
     // Target positions in physical units (for the last added segment)
-    double m_targetTheta;
-    double m_targetRho;
+    float m_targetTheta;
+    float m_targetRho;
 
     // Step event queue (circular buffer)
     StepEvent m_stepQueue[STEP_QUEUE_SIZE];
@@ -184,7 +183,7 @@ private:
 
     // Timing
     uint32_t m_segmentStartTime;     // Microseconds when current segment started
-    double m_segmentElapsed;         // Time elapsed in current segment
+    float m_segmentElapsed;          // Time elapsed in current segment
 
     // State
     bool m_running;
@@ -202,12 +201,12 @@ private:
     bool queueStepEvent(uint32_t time, uint8_t stepMask, uint8_t dirMask);
 
     // Convert physical units to steps
-    int32_t thetaToSteps(double theta) const;
-    int32_t rhoToSteps(double rho) const;
+    int32_t thetaToSteps(float theta) const;
+    int32_t rhoToSteps(float rho) const;
 
     // Convert steps to physical units
-    double stepsToTheta(int32_t steps) const;
-    double stepsToRho(int32_t steps) const;
+    float stepsToTheta(int32_t steps) const;
+    float stepsToRho(int32_t steps) const;
 
     // ISR callback (static for C compatibility)
     static void IRAM_ATTR stepTimerISR(void* arg);

@@ -4,7 +4,7 @@
 - **Phase 1 (S-Curve Validation):** COMPLETED
 - **Phase 2 (MotionPlanner Implementation):** COMPLETED
 - **Phase 3 (Verification):** COMPLETED. All 24 pattern files pass verification with perfect step-accurate positioning and verified speed scaling.
-- **Phase 4 (Optimization):** COMPLETED. Float optimization for ESP32 FPU (~3x faster step generation).
+- **Phase 4 (Optimization):** COMPLETED. Full float conversion for ESP32 FPU (~3x faster execution).
 
 ## Overview
 
@@ -65,19 +65,18 @@ struct AxisProfile {
     int32_t startSteps;        // Starting position in steps
     int32_t targetSteps;       // Absolute target in steps
     int32_t deltaSteps;        // Signed delta from start
-    double deltaUnits;         // Delta in physical units (rad or mm)
+    float deltaUnits;          // Delta in physical units (rad or mm)
     int8_t direction;          // +1 or -1
-    SCurve::Profile profile;   // 7-phase S-curve (double precision)
-    SCurve::ProfileF profileF; // Float version for FPU-optimized evaluation
-    float timeScaleF;          // Ratio: duration / profile.totalTime (float)
+    SCurve::Profile profile;   // 7-phase S-curve (single precision float)
+    float timeScale;           // Ratio: duration / profile.totalTime
 };
 
 struct Segment {
-    double targetTheta, targetRho;  // Target positions
-    AxisProfile theta, rho;         // Per-axis profiles
-    double duration;                // Synchronized duration (same for both)
-    double thetaEntryVel, thetaExitVel;  // Velocity continuity
-    double rhoEntryVel, rhoExitVel;
+    float targetTheta, targetRho;  // Target positions
+    AxisProfile theta, rho;        // Per-axis profiles
+    float duration;                // Synchronized duration (same for both)
+    float thetaEntryVel, thetaExitVel;  // Velocity continuity
+    float rhoEntryVel, rhoExitVel;
     bool calculated, executing;
 };
 
@@ -236,7 +235,7 @@ Real-time telemetry has been added to the serial output (1Hz) to monitor planner
 ### 5. Float Optimization for ESP32 FPU
 **Issue:** Step generation was CPU-intensive due to `double` math being software-emulated.
 **Cause:** The ESP32's FPU only supports single-precision `float`; all `double` operations are emulated in software (~3x slower).
-**Fix:** Added `SCurve::ProfileF` (float version) and `getPositionF()` for real-time evaluation. The initial profile calculation uses `double` for precision, then converts to `float` for step generation in `fillStepQueue()`. This provides ~3x speedup in the main loop while maintaining accuracy.
+**Fix:** Converted entire codebase from `double` to `float` (single precision). This includes SCurve profiles, MotionPlanner parameters, and all position/velocity calculations. For a motion control system, float's ~7 digits of precision is more than sufficient. This provides ~3x speedup throughout the system.
 
 ### 6. Stop/Start Bug
 **Issue:** Stopping a pattern mid-way caused the next pattern to fail or start incorrectly.

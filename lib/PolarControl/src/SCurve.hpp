@@ -19,98 +19,79 @@ class SCurve {
 public:
     struct Profile {
         // Phase durations (seconds)
-        double t[7];
+        float t[7];
 
         // Phase end times (cumulative)
-        double tEnd[7];
+        float tEnd[7];
 
         // Phase end positions (cumulative)
-        double posEnd[7];
+        float posEnd[7];
 
         // Velocities at phase boundaries
-        double v[8];  // v[0] = start, v[7] = end
+        float v[8];  // v[0] = start, v[7] = end
 
         // Accelerations at phase boundaries
-        double a[8];
+        float a[8];
 
         // Total time and distance
-        double totalTime;
-        double totalDistance;
-
-        // Constraints used
-        double jerk;
-        double maxAccel;
-        double maxVelocity;
-    };
-
-    // Float-optimized profile for ESP32 FPU real-time evaluation
-    // Single-precision is ~3x faster on ESP32 since the FPU only supports float
-    struct ProfileF {
-        float tEnd[7];      // Phase end times (cumulative)
-        float posEnd[7];    // Phase end positions (cumulative)
-        float v[8];         // Velocities at phase boundaries
-        float a[8];         // Accelerations at phase boundaries
         float totalTime;
         float totalDistance;
-        float jerk;
-    };
 
-    // Convert double profile to float profile for real-time evaluation
-    static void toFloat(const Profile& src, ProfileF& dst);
+        // Constraints used
+        float jerk;
+        float maxAccel;
+        float maxVelocity;
+    };
 
     // Calculate a profile for a move
     // Returns true if successful, false if constraints can't be satisfied
     static bool calculate(
-        double distance,      // Total distance to travel (positive)
-        double vStart,        // Starting velocity
-        double vEnd,          // Ending velocity
-        double vMax,          // Maximum velocity
-        double aMax,          // Maximum acceleration
-        double jMax,          // Maximum jerk
+        float distance,       // Total distance to travel (positive)
+        float vStart,         // Starting velocity
+        float vEnd,           // Ending velocity
+        float vMax,           // Maximum velocity
+        float aMax,           // Maximum acceleration
+        float jMax,           // Maximum jerk
         Profile& out          // Output profile
     );
 
     // Get velocity at time t within the profile
-    static double getVelocity(const Profile& p, double t);
+    static float getVelocity(const Profile& p, float t);
 
     // Get position at time t within the profile
-    static double getPosition(const Profile& p, double t);
+    static float getPosition(const Profile& p, float t);
 
     // Optimized access with phase caching
-    static double getPosition(const Profile& p, double t, int& phaseIdx);
-
-    // Float-optimized position calculation for ESP32 FPU
-    // Returns fractional position (0.0 to 1.0) for use with step calculations
-    static float getPositionF(const ProfileF& p, float t, int& phaseIdx);
+    static float getPosition(const Profile& p, float t, int& phaseIdx);
 
     // Get acceleration at time t within the profile
-    static double getAcceleration(const Profile& p, double t);
+    static float getAcceleration(const Profile& p, float t);
 
     // Calculate maximum achievable entry velocity given distance, exit velocity, and limits
     // Returns the highest vStart that can decelerate to vEnd within the given distance
-    static double maxAchievableEntryVelocity(
-        double distance,
-        double vEnd,
-        double vMax,
-        double aMax,
-        double jMax
+    static float maxAchievableEntryVelocity(
+        float distance,
+        float vEnd,
+        float vMax,
+        float aMax,
+        float jMax
     );
 
     // Calculate distance required to decelerate from vStart to vEnd
-    static double decelerationDistance(
-        double vStart,
-        double vEnd,
-        double aMax,
-        double jMax
+    static float decelerationDistance(
+        float vStart,
+        float vEnd,
+        float aMax,
+        float jMax
     );
 
 private:
     // Calculate distance covered during a jerk phase
-    static double jerkPhaseDistance(double v0, double a0, double j, double t);
+    static float jerkPhaseDistance(float v0, float a0, float j, float t);
 
     // Calculate distance covered during constant accel phase
-    static double constAccelDistance(double v0, double a, double t);
+    static float constAccelDistance(float v0, float a, float t);
 
     // Calculate velocity after jerk phase
-    static double jerkPhaseVelocity(double v0, double a0, double j, double t);
+    static float jerkPhaseVelocity(float v0, float a0, float j, float t);
 };
