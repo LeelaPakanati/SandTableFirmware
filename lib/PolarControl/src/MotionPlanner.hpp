@@ -36,8 +36,7 @@ struct AxisProfile {
     int8_t direction;          // +1 or -1 (0 if no motion)
     SCurve::Profile profile;   // 7-phase S-curve (double precision for calculation)
     SCurve::ProfileF profileF; // Float version for real-time evaluation (ESP32 FPU optimized)
-    double syncDuration;       // Duration after synchronization
-    float timeScaleF;          // Ratio: syncDuration / profile.totalTime (float for FPU)
+    float timeScaleF;          // Ratio: duration / profile.totalTime (float for FPU)
 };
 
 // A motion segment with synchronized theta/rho profiles

@@ -220,10 +220,7 @@ void MotionPlanner::calculateSegmentProfile(Segment& seg) {
 
     // Calculate time scale for each axis (float for FPU optimization)
     // timeScale > 1 means we stretch the profile (slower motion)
-    seg.theta.syncDuration = syncDuration;
     seg.theta.timeScaleF = (thetaTime > 0.0001) ? (float)(syncDuration / thetaTime) : 1.0f;
-
-    seg.rho.syncDuration = syncDuration;
     seg.rho.timeScaleF = (rhoTime > 0.0001) ? (float)(syncDuration / rhoTime) : 1.0f;
 
     // Convert profiles to float for real-time FPU evaluation
