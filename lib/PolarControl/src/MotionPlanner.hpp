@@ -21,7 +21,7 @@
 #endif
 
 // Configuration constants
-static constexpr int SEGMENT_BUFFER_SIZE = 32;
+static constexpr int SEGMENT_BUFFER_SIZE = 16;
 static constexpr int STEP_QUEUE_SIZE = 512;
 static constexpr double MIN_SEGMENT_DURATION = 0.010;  // 10ms minimum
 static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
@@ -34,9 +34,10 @@ struct AxisProfile {
     int32_t deltaSteps;        // Signed delta from start
     double deltaUnits;         // Delta in physical units (rad or mm)
     int8_t direction;          // +1 or -1 (0 if no motion)
-    SCurve::Profile profile;   // 7-phase S-curve
+    SCurve::Profile profile;   // 7-phase S-curve (double precision for calculation)
+    SCurve::ProfileF profileF; // Float version for real-time evaluation (ESP32 FPU optimized)
     double syncDuration;       // Duration after synchronization
-    double timeScale;          // Ratio: syncDuration / profile.totalTime
+    float timeScaleF;          // Ratio: syncDuration / profile.totalTime (float for FPU)
 };
 
 // A motion segment with synchronized theta/rho profiles
@@ -61,6 +62,11 @@ struct Segment {
     // Execution state (phase tracking)
     int thetaPhaseIdx = 0;
     int rhoPhaseIdx = 0;
+
+    // Generation state (to prevent duplicate steps)
+    float lastGenTimeF = 0.0f; // Float for ESP32 FPU optimization
+    int32_t lastGenThetaSteps = 0;
+    int32_t lastGenRhoSteps = 0;
 };
 
 // Step event for the ISR queue
@@ -160,8 +166,8 @@ private:
     std::atomic<int32_t> m_queuedRSteps;
 
     // 2. Executed position - actual motor position (updated by ISR)
-    volatile int32_t m_executedTSteps;
-    volatile int32_t m_executedRSteps;
+    std::atomic<int32_t> m_executedTSteps;
+    std::atomic<int32_t> m_executedRSteps;
 
     // Target positions in physical units (for the last added segment)
     double m_targetTheta;

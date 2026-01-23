@@ -348,7 +348,7 @@ double SCurve::getPosition(const Profile& p, double t) {
 
 double SCurve::getAcceleration(const Profile& p, double t) {
     if (t <= 0) return p.a[0];
-    if (t >= p.totalTime) return 0;
+    if (t >= p.totalTime) return p.a[7];
 
     // Find which phase we're in
     int phase = 0;
@@ -446,4 +446,123 @@ double SCurve::maxAchievableEntryVelocity(double distance, double vEnd, double v
     }
 
     return vLow;
+}
+
+double SCurve::getPosition(const Profile& p, double t, int& phaseIdx) {
+    if (t <= 0) return 0;
+    if (t >= p.totalTime) {
+        phaseIdx = 6;
+        return p.totalDistance;
+    }
+
+    // Advance phase if needed
+    while (phaseIdx < 6 && t > p.tEnd[phaseIdx]) {
+        phaseIdx++;
+    }
+
+    // Determine local time and start pos
+    double tPhase;
+    double posAtStart;
+
+    if (phaseIdx > 0) {
+        tPhase = t - p.tEnd[phaseIdx - 1];
+        posAtStart = p.posEnd[phaseIdx - 1];
+    } else {
+        tPhase = t;
+        posAtStart = 0;
+    }
+
+    double v0 = p.v[phaseIdx];
+    double a0 = p.a[phaseIdx];
+    double j = 0;
+
+    switch (phaseIdx) {
+        case 0: j = p.jerk; break;
+        case 1: j = 0; break;
+        case 2: j = -p.jerk; break;
+        case 3: j = 0; break;
+        case 4: j = -p.jerk; break;
+        case 5: j = 0; break;
+        case 6: j = p.jerk; break;
+    }
+
+    if (j != 0) {
+        return posAtStart + jerkPhaseDistance(v0, a0, j, tPhase);
+    } else {
+        return posAtStart + constAccelDistance(v0, a0, tPhase);
+    }
+}
+
+// ============================================================================
+// Float-optimized versions for ESP32 FPU
+// The ESP32 FPU only supports single-precision float, so double operations
+// are emulated in software and ~3x slower.
+// ============================================================================
+
+void SCurve::toFloat(const Profile& src, ProfileF& dst) {
+    for (int i = 0; i < 7; i++) {
+        dst.tEnd[i] = (float)src.tEnd[i];
+        dst.posEnd[i] = (float)src.posEnd[i];
+    }
+    for (int i = 0; i < 8; i++) {
+        dst.v[i] = (float)src.v[i];
+        dst.a[i] = (float)src.a[i];
+    }
+    dst.totalTime = (float)src.totalTime;
+    dst.totalDistance = (float)src.totalDistance;
+    dst.jerk = (float)src.jerk;
+}
+
+// Inline float versions of distance calculations
+static inline float jerkPhaseDistanceF(float v0, float a0, float j, float t) {
+    return v0 * t + 0.5f * a0 * t * t + (1.0f / 6.0f) * j * t * t * t;
+}
+
+static inline float constAccelDistanceF(float v0, float a, float t) {
+    return v0 * t + 0.5f * a * t * t;
+}
+
+float SCurve::getPositionF(const ProfileF& p, float t, int& phaseIdx) {
+    if (t <= 0.0f) return 0.0f;
+    if (t >= p.totalTime) {
+        phaseIdx = 6;
+        return p.totalDistance;
+    }
+
+    // Advance phase if needed
+    while (phaseIdx < 6 && t > p.tEnd[phaseIdx]) {
+        phaseIdx++;
+    }
+
+    // Determine local time and start pos
+    float tPhase;
+    float posAtStart;
+
+    if (phaseIdx > 0) {
+        tPhase = t - p.tEnd[phaseIdx - 1];
+        posAtStart = p.posEnd[phaseIdx - 1];
+    } else {
+        tPhase = t;
+        posAtStart = 0.0f;
+    }
+
+    float v0 = p.v[phaseIdx];
+    float a0 = p.a[phaseIdx];
+    float j = 0.0f;
+
+    switch (phaseIdx) {
+        case 0: j = p.jerk; break;
+        case 1: j = 0.0f; break;
+        case 2: j = -p.jerk; break;
+        case 3: j = 0.0f; break;
+        case 4: j = -p.jerk; break;
+        case 5: j = 0.0f; break;
+        case 6: j = p.jerk; break;
+    }
+
+    if (j != 0.0f) {
+        return posAtStart + jerkPhaseDistanceF(v0, a0, j, tPhase);
+    } else {
+        return posAtStart + constAccelDistanceF(v0, a0, tPhase);
+    }
 }

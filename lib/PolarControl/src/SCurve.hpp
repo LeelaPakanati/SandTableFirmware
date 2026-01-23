@@ -43,6 +43,21 @@ public:
         double maxVelocity;
     };
 
+    // Float-optimized profile for ESP32 FPU real-time evaluation
+    // Single-precision is ~3x faster on ESP32 since the FPU only supports float
+    struct ProfileF {
+        float tEnd[7];      // Phase end times (cumulative)
+        float posEnd[7];    // Phase end positions (cumulative)
+        float v[8];         // Velocities at phase boundaries
+        float a[8];         // Accelerations at phase boundaries
+        float totalTime;
+        float totalDistance;
+        float jerk;
+    };
+
+    // Convert double profile to float profile for real-time evaluation
+    static void toFloat(const Profile& src, ProfileF& dst);
+
     // Calculate a profile for a move
     // Returns true if successful, false if constraints can't be satisfied
     static bool calculate(
@@ -60,6 +75,13 @@ public:
 
     // Get position at time t within the profile
     static double getPosition(const Profile& p, double t);
+
+    // Optimized access with phase caching
+    static double getPosition(const Profile& p, double t, int& phaseIdx);
+
+    // Float-optimized position calculation for ESP32 FPU
+    // Returns fractional position (0.0 to 1.0) for use with step calculations
+    static float getPositionF(const ProfileF& p, float t, int& phaseIdx);
 
     // Get acceleration at time t within the profile
     static double getAcceleration(const Profile& p, double t);
