@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <atomic>
 #include "SCurve.hpp"
+#include "FastGPIO.hpp"
 
 #ifndef NATIVE_BUILD
 #include <Arduino.h>

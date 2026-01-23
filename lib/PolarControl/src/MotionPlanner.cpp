@@ -68,17 +68,15 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
     m_tMaxVel = tMaxVel;
     m_tMaxAccel = tMaxAccel;
     m_tMaxJerk = tMaxJerk;
-
-#ifndef NATIVE_BUILD
+    
     // Setup GPIO pins
     pinMode(T_STEP_PIN, OUTPUT);
     pinMode(T_DIR_PIN, OUTPUT);
     pinMode(R_STEP_PIN, OUTPUT);
     pinMode(R_DIR_PIN, OUTPUT);
 
-    digitalWrite(T_STEP_PIN, LOW);
-    digitalWrite(R_STEP_PIN, LOW);
-#endif
+    FastGPIO::setLow(T_STEP_PIN);
+    FastGPIO::setLow(R_STEP_PIN);
 
     // Reset positions
     m_queuedTSteps = 0;
@@ -785,10 +783,10 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
 
     // Set direction pins first
     if (event.stepMask & 0x01) {
-        digitalWrite(T_DIR_PIN, (event.dirMask & 0x01) ? HIGH : LOW);
+        FastGPIO::write(T_DIR_PIN, (event.dirMask & 0x01));
     }
     if (event.stepMask & 0x02) {
-        digitalWrite(R_DIR_PIN, (event.dirMask & 0x02) ? HIGH : LOW);
+        FastGPIO::write(R_DIR_PIN, (event.dirMask & 0x02));
     }
 
     // Small delay for direction setup (inline)
@@ -796,10 +794,10 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
 
     // Generate step pulses
     if (event.stepMask & 0x01) {
-        digitalWrite(T_STEP_PIN, HIGH);
+        FastGPIO::setHigh(T_STEP_PIN);
     }
     if (event.stepMask & 0x02) {
-        digitalWrite(R_STEP_PIN, HIGH);
+        FastGPIO::setHigh(R_STEP_PIN);
     }
 
     // Brief pulse width delay
@@ -807,7 +805,7 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
 
     // End step pulses
     if (event.stepMask & 0x01) {
-        digitalWrite(T_STEP_PIN, LOW);
+        FastGPIO::setLow(T_STEP_PIN);
         // Update executed position
         if (event.dirMask & 0x01) {
             m_executedTSteps++;
@@ -816,7 +814,7 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
         }
     }
     if (event.stepMask & 0x02) {
-        digitalWrite(R_STEP_PIN, LOW);
+        FastGPIO::setLow(R_STEP_PIN);
         if (event.dirMask & 0x02) {
             m_executedRSteps++;
         } else {

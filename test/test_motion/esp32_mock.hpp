@@ -97,6 +97,20 @@ inline int digitalRead(int pin) {
     return LOW;
 }
 
+// Mock ESP32 GPIO registers for direct port manipulation
+struct GPIO_reg_t {
+    uint32_t out_w1ts;
+    uint32_t out_w1tc;
+    struct {
+        uint32_t val;
+    } out1_w1ts;
+    struct {
+        uint32_t val;
+    } out1_w1tc;
+};
+
+inline GPIO_reg_t GPIO;
+
 // ESP timer stubs
 typedef void* esp_timer_handle_t;
 
