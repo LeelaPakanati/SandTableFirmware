@@ -18,14 +18,20 @@
 // Test configuration
 static constexpr double R_MAX = 450.0;           // mm
 static constexpr int STEPS_PER_MM_R = 100;       // steps per mm for rho
-static constexpr int STEPS_PER_RAD_T = 3000;     // steps per rad for theta
+static constexpr int STEPS_PER_RAD_T = 3000;     // steps per rad for theta (aligned with MotionPlanner default)
+
+int getQueueSpace(const MotionPlanner& p) {
+    uint32_t depth, underruns;
+    p.getDiagnostics(depth, underruns);
+    return STEP_QUEUE_SIZE - 1 - depth;
+}
 
 // Motion limits
-static constexpr double R_MAX_VEL = 30.0;        // mm/s
+static constexpr double R_MAX_VEL = 10.0;        // mm/s
 static constexpr double R_MAX_ACCEL = 20.0;      // mm/s²
 static constexpr double R_MAX_JERK = 100.0;      // mm/s³
-static constexpr double T_MAX_VEL = 1.0;         // rad/s
-static constexpr double T_MAX_ACCEL = 2.0;       // rad/s²
+static constexpr double T_MAX_VEL = 0.25;         // rad/s
+static constexpr double T_MAX_ACCEL = 1.0;       // rad/s²
 static constexpr double T_MAX_JERK = 10.0;       // rad/s³
 
 // ============================================================================
@@ -188,6 +194,7 @@ bool testMaxEntryVel() {
 
 bool testMotionPlannerBasic() {
     std::cout << "\n=== Test: MotionPlanner Basic ===" << std::endl;
+    resetMock();
 
     MotionPlanner planner;
     planner.init(STEPS_PER_MM_R, STEPS_PER_RAD_T, R_MAX,
@@ -262,6 +269,7 @@ bool testMotionPlannerBasic() {
 
 bool testDirectionReversal() {
     std::cout << "\n=== Test: Direction Reversal ===" << std::endl;
+    resetMock();
 
     MotionPlanner planner;
     planner.init(STEPS_PER_MM_R, STEPS_PER_RAD_T, R_MAX,
@@ -304,6 +312,7 @@ bool testDirectionReversal() {
 
 bool testSpeedMultiplier() {
     std::cout << "\n=== Test: Speed Multiplier ===" << std::endl;
+    resetMock();
 
     MotionPlanner planner;
     planner.init(STEPS_PER_MM_R, STEPS_PER_RAD_T, R_MAX,
@@ -379,9 +388,92 @@ bool testSpeedMultiplier() {
 // Test: Pattern file
 // ============================================================================
 
+// Helper to wait for ISR to reach a specific target with tolerance
+bool waitForTarget(const MotionPlanner& planner, int32_t targetT, int32_t targetR,
+                   int maxIters = 10000, int32_t toleranceT = 0, int32_t toleranceR = 0) {
+    int iters = 0;
+    while (iters < maxIters) {
+        double curT, curR;
+        planner.getCurrentPosition(curT, curR);
+
+        // Use exact same scaling as internal to avoid rounding diffs
+        int32_t sT = (int32_t)round(curT * STEPS_PER_RAD_T);
+        int32_t sR = (int32_t)round(curR * STEPS_PER_MM_R);
+
+        int32_t errT = std::abs(sT - targetT);
+        int32_t errR = std::abs(sR - targetR);
+
+        if (errT <= toleranceT && errR <= toleranceR) {
+            return true;
+        }
+
+        const_cast<MotionPlanner&>(planner).process();
+        advanceMicros(1000);
+        iters++;
+    }
+
+    double curT, curR;
+    planner.getCurrentPosition(curT, curR);
+    int32_t sT = (int32_t)round(curT * STEPS_PER_RAD_T);
+    int32_t sR = (int32_t)round(curR * STEPS_PER_MM_R);
+    std::cout << "\nDEBUG: waitForTarget timeout! Target=(" << targetT << "," << targetR
+              << ") Got=(" << sT << "," << sR << ") err=(" << (sT-targetT) << "," << (sR-targetR) << ")" << std::endl;
+
+    return false;
+}
+
+// Helper to run a loaded pattern and return the total time
+double runPatternFileInternal(MotionPlanner& planner, ThrReader& reader,
+                             const std::vector<std::pair<int32_t, int32_t>>& expectedStepTargets) {
+    planner.start();
+
+    int iterations = 0;
+    int maxIterations = 2000000;
+    uint32_t totalSegments = expectedStepTargets.size();
+
+    // Run the pattern to completion
+    while ((planner.isRunning() || !planner.isIdle()) && iterations < maxIterations) {
+        planner.process();
+        advanceMicros(10000); // 10ms steps
+        iterations++;
+    }
+
+    if (planner.getCompletedCount() < totalSegments) {
+        std::cout << "DEBUG: segment count mismatch: completed=" << planner.getCompletedCount()
+                  << " total=" << totalSegments << std::endl;
+        return -1.0;
+    }
+
+    // Verify final position matches expected final target
+    // For small patterns, use tight tolerance; for large patterns, allow proportional error
+    int32_t toleranceT = std::max(3, (int)(totalSegments / 1000));  // 0.1% or 3 steps minimum
+    int32_t toleranceR = std::max(2, (int)(totalSegments / 2000));  // 0.05% or 2 steps minimum
+
+    if (!expectedStepTargets.empty()) {
+        int32_t finalTargetT = expectedStepTargets.back().first;
+        int32_t finalTargetR = expectedStepTargets.back().second;
+
+        // Wait for ISR to finish executing remaining steps
+        if (!waitForTarget(planner, finalTargetT, finalTargetR, 50000, toleranceT, toleranceR)) {
+            double curT, curR;
+            planner.getCurrentPosition(curT, curR);
+            int32_t actualT = (int32_t)round(curT * STEPS_PER_RAD_T);
+            int32_t actualR = (int32_t)round(curR * STEPS_PER_MM_R);
+            std::cout << "DEBUG: Final position mismatch! Target=(" << finalTargetT << "," << finalTargetR
+                      << ") Got=(" << actualT << "," << actualR
+                      << ") err=(" << (actualT - finalTargetT) << "," << (actualR - finalTargetR)
+                      << ") tolerance=(" << toleranceT << "," << toleranceR << ")" << std::endl;
+            return -1.0;
+        }
+    }
+
+    return g_mockMicros.load() / 1000000.0;
+}
+
 bool testPatternFile(const std::string& filepath) {
     std::cout << "\n=== Test: Pattern File ===" << std::endl;
     std::cout << "Loading: " << filepath << std::endl;
+    resetMock();
 
     ThrReader reader;
     reader.setMaxRho(R_MAX);
@@ -391,89 +483,79 @@ bool testPatternFile(const std::string& filepath) {
         return false;
     }
 
-    MotionPlanner planner;
-    planner.init(STEPS_PER_MM_R, STEPS_PER_RAD_T, R_MAX,
-                 R_MAX_VEL, R_MAX_ACCEL, R_MAX_JERK,
-                 T_MAX_VEL, T_MAX_ACCEL, T_MAX_JERK);
-
-    // Feed segments to planner
-    int segmentsAdded = 0;
+    // Capture all target steps first
+    std::vector<std::pair<int32_t, int32_t>> expectedStepTargets;
+    reader.reset();
     double theta, rho;
-    bool started = false;
-
     while (reader.getNextPosition(theta, rho)) {
-        // Keep buffer moderately full
-        if (!planner.hasSpace()) {
-            planner.recalculate();
-            
-            if (!started) {
-                planner.start();
-                started = true;
-                setMicros(0); // Reset time for simulation tracking
-            }
+        int32_t targetT = (int32_t)(theta * STEPS_PER_RAD_T);
+        int32_t targetR = (int32_t)(rho * STEPS_PER_MM_R);
+        expectedStepTargets.push_back({targetT, targetR});
+    }
 
-            int waitIters = 0;
-            while (!planner.hasSpace() && waitIters < 100000) { // Increased timeout
-                // Process to make room
+    auto runAtSpeed = [&](double speedMult) -> double {
+        resetMock();
+        MotionPlanner planner;
+        planner.init(STEPS_PER_MM_R, STEPS_PER_RAD_T, R_MAX,
+                     R_MAX_VEL, R_MAX_ACCEL, R_MAX_JERK,
+                     T_MAX_VEL, T_MAX_ACCEL, T_MAX_JERK);
+        planner.setSpeedMultiplier(speedMult);
+        
+        reader.reset();
+        bool plannerStarted = false;
+        int added = 0;
+        while (reader.getNextPosition(theta, rho)) {
+            while (!planner.addSegment(theta, rho)) {
+                if (!plannerStarted) {
+                    planner.recalculate();
+                    planner.start();
+                    plannerStarted = true;
+                }
                 planner.process();
-                advanceMicros(1000);
-                waitIters++;
+                advanceMicros(10000);
             }
+            added++;
             
-            if (waitIters >= 100000) {
-                std::cout << "FAIL: Buffer clear timeout" << std::endl;
-                return false;
+            // Periodically recalculate to keep motion smooth
+            if (added % 8 == 0) {
+                planner.recalculate();
             }
         }
-
-        if (planner.addSegment(theta, rho)) {
-            segmentsAdded++;
+        planner.setEndOfPattern(true);
+        planner.recalculate();
+        
+        if (!plannerStarted) {
+            planner.start();
         }
+        
+        return runPatternFileInternal(planner, reader, expectedStepTargets);
+    };
 
-        // Mark end of pattern when we've added all segments
-        if (reader.currentIndex() >= reader.size()) {
-            planner.setEndOfPattern(true);
-        }
+    std::cout << "Running at full speed (1.0)..." << std::endl;
+    double time10 = runAtSpeed(1.0);
+    if (time10 < 0) {
+        std::cout << "FAIL: Full speed run failed" << std::endl;
+        return false;
+    }
+    std::cout << "Time: " << time10 << "s" << std::endl;
+
+    std::cout << "Running at half speed (0.5)..." << std::endl;
+    double time05 = runAtSpeed(0.5);
+    if (time05 < 0) {
+        std::cout << "FAIL: Half speed run failed" << std::endl;
+        return false;
+    }
+    std::cout << "Time: " << time05 << "s" << std::endl;
+
+    double ratio = time05 / time10;
+    bool ratioPassed = ratio > 1.2; // Should be significantly slower
+    if (ratioPassed) {
+        std::cout << "PASS" << std::endl;
+    } else {
+        std::cout << "FAIL" << std::endl;
     }
 
-    std::cout << "Added " << segmentsAdded << " segments" << std::endl;
-
-    // Start and run to completion
-    planner.setEndOfPattern(true);
-    planner.recalculate();
-    
-    if (!started) {
-        planner.start();
-        started = true;
-        setMicros(0);
-    }
-    int iterations = 0;
-    int maxIterations = 1000000;
-
-    while (planner.isRunning() && iterations < maxIterations) {
-        planner.process();
-        advanceMicros(20000);
-        iterations++;
-
-        if (iterations % 1000 == 0) {
-            double t, r;
-            planner.getCurrentPosition(t, r);
-            int progress = (planner.getCompletedCount() * 100) / segmentsAdded;
-            std::cout << "\r  Progress: " << progress << "% (" << planner.getCompletedCount()
-                      << "/" << segmentsAdded << ")" << std::flush;
-        }
-    }
-
-    std::cout << std::endl;
-
-    bool passed = planner.getCompletedCount() == (uint32_t)segmentsAdded;
-    double totalTime = g_mockMicros.load() / 1000000.0;
-
-    std::cout << "Completed: " << planner.getCompletedCount() << "/" << segmentsAdded
-              << " segments in " << totalTime << " seconds"
-              << (passed ? " PASS" : " FAIL") << std::endl;
-
-    return passed;
+    return ratioPassed;
 }
 
 // ============================================================================
