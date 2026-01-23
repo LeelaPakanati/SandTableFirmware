@@ -419,8 +419,6 @@ void MotionPlanner::start() {
 }
 
 void MotionPlanner::stop() {
-    if (!m_running) return;
-
     if (m_timerHandle != nullptr) {
         esp_timer_stop((esp_timer_handle_t)m_timerHandle);
     }
@@ -431,6 +429,23 @@ void MotionPlanner::stop() {
     // Clear step queue
     m_stepQueueHead = 0;
     m_stepQueueTail = 0;
+
+    // Clear segment buffer
+    m_segmentHead = 0;
+    m_segmentTail = 0;
+    m_segmentCount = 0;
+
+    // Reset pattern state
+    m_endOfPattern = false;
+
+    // Sync queued positions with executed positions so next pattern
+    // starts from current actual position
+    m_queuedTSteps.store(m_executedTSteps.load());
+    m_queuedRSteps.store(m_executedRSteps.load());
+
+    // Update target positions to match
+    m_targetTheta = stepsToTheta(m_executedTSteps);
+    m_targetRho = stepsToRho(m_executedRSteps);
 }
 
 void MotionPlanner::process() {
