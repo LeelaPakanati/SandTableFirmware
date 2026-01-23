@@ -22,14 +22,14 @@ inline ClearingPattern getRandomClearingPattern() {
 
 class ClearingPatternGen : public PosGen {
 public:
-    ClearingPatternGen(ClearingPattern pattern, double maxRho = 450.0);
+    ClearingPatternGen(ClearingPattern pattern, float maxRho = 450.0);
     PolarCord_t getNextPos() override;
 
 private:
     ClearingPattern m_pattern;
-    double m_maxRho;
-    double m_currentTheta;
-    double m_currentRho;
+    float m_maxRho;
+    float m_currentTheta;
+    float m_currentRho;
     int m_circleIndex;  // For concentric circles
     int m_spokeIndex;   // For zigzag radial
     bool m_inward;      // For zigzag radial direction

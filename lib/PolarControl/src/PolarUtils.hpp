@@ -3,8 +3,8 @@
 #include <cmath>
 
 struct PolarCord_t {
-    double theta;
-    double rho;
+    float theta;
+    float rho;
 
     String getStr() const {
         return "T:" + String(theta) + "|R:" + String(rho);
@@ -22,7 +22,7 @@ struct PolarCord_t {
         return (theta == other.theta) && (rho == other.rho);
     }
 
-    PolarCord_t operator * (double mult) const {
+    PolarCord_t operator * (float mult) const {
         return {theta * mult, rho * mult};
     }
 
@@ -30,18 +30,18 @@ struct PolarCord_t {
         return {theta + other.theta, rho + other.rho};
     }
 
-    PolarCord_t operator / (double div) const {
+    PolarCord_t operator / (float div) const {
         return {theta / div, rho / div};
     }
 
     PolarCord_t operator / (int div) const {
-        return {theta / (double)div, rho / (double)div};
+        return {theta / (float)div, rho / (float)div};
     }
 };
 
 struct CartesianCord_t {
-    double x;
-    double y;
+    float x;
+    float y;
 };
 
 class PolarUtils {
@@ -53,16 +53,16 @@ public:
         };
     }
 
-    static CartesianCord_t toNormalizedCartesian(const PolarCord_t& polar, double maxRho) {
+    static CartesianCord_t toNormalizedCartesian(const PolarCord_t& polar, float maxRho) {
         if (maxRho <= 0) return {0.5, 0.5};
         CartesianCord_t cart = toCartesian(polar);
         return {
-            (cart.x / maxRho + 1.0) / 2.0,
-            (cart.y / maxRho + 1.0) / 2.0
+            (cart.x / maxRho + 1.0f) / 2.0f,
+            (cart.y / maxRho + 1.0f) / 2.0f
         };
     }
 
-    static double normalizeTheta(double theta) {
+    static float normalizeTheta(float theta) {
         return std::atan2(std::sin(theta), std::cos(theta));
     }
 };

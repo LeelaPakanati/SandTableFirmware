@@ -99,6 +99,6 @@ private:
 
     unsigned long m_lastLogBroadcast = 0;
     unsigned long m_lastPosBroadcast = 0; // Timer for position streaming
-    double m_lastBroadcastX = -1.0;
-    double m_lastBroadcastY = -1.0;
+    float m_lastBroadcastX = -1.0f;
+    float m_lastBroadcastY = -1.0f;
 };

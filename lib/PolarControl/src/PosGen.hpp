@@ -21,7 +21,7 @@ class FilePosGen : public PosGen {
       }
     }
 
-    FilePosGen(String filePath, double maxRho = 450.0) :
+    FilePosGen(String filePath, float maxRho = 450.0) :
       m_currFile(filePath),
       m_maxRho(maxRho),
       m_bufHead(0),
@@ -44,14 +44,14 @@ class FilePosGen : public PosGen {
 
     PolarCord_t getNextPos() override {
       if (!m_file && m_bufHead == m_bufTail) {
-        return {std::nan(""), std::nan("")};
+        return {std::nanf(""), std::nanf("")};
       }
 
       // Read a line from the buffer
       String line = readBufferedLine();
       if (line.length() == 0 && !m_file && m_bufHead == m_bufTail) {
           // EOF
-          return {std::nan(""), std::nan("")};
+          return {std::nanf(""), std::nanf("")};
       }
       
       line.trim();
@@ -63,8 +63,8 @@ class FilePosGen : public PosGen {
       }
 
       // Parse the line: expected format "theta rho" or "theta,rho"
-      double theta = 0.0;
-      double rho = 0.0;
+      float theta = 0.0;
+      float rho = 0.0;
 
       int separatorIndex = line.indexOf(',');
       if (separatorIndex == -1) {
@@ -80,8 +80,8 @@ class FilePosGen : public PosGen {
         thetaStr.trim();
         rhoStr.trim();
 
-        theta = thetaStr.toDouble();
-        rho = rhoStr.toDouble();
+        theta = thetaStr.toFloat();
+        rho = rhoStr.toFloat();
 
         // Scale rho from 0-1 range to 0-maxRho
         rho = rho * m_maxRho;
@@ -104,7 +104,7 @@ class FilePosGen : public PosGen {
   private:
     int m_currLine = 0;
     String m_currFile = "";
-    double m_maxRho;
+    float m_maxRho;
     File m_file;
     size_t m_fileSize = 0;
 

@@ -154,11 +154,11 @@ reverses.
 ```cpp
 class MotionPlanner {
 public:
-    void init(int stepsPerMmR, int stepsPerRadT, double maxRho,
-              double rMaxVel, double rMaxAccel, double rMaxJerk,
-              double tMaxVel, double tMaxAccel, double tMaxJerk);
+    void init(int stepsPerMmR, int stepsPerRadT, float maxRho,
+              float rMaxVel, float rMaxAccel, float rMaxJerk,
+              float tMaxVel, floafloat tMaxAccel, float tMaxJerk);
 
-    bool addSegment(double theta, double rho);
+    bool addSegment(float theta, float rho);
     void recalculate();
     void start();
     void stop();
@@ -168,9 +168,9 @@ public:
     bool isRunning() const;
     bool isIdle() const;
 
-    void getCurrentPosition(double& theta, double& rho) const;
+    void getCurrentPosition(float& theta, float& rho) const;
     void resetTheta();
-    void setSpeedMultiplier(double mult);
+    void setSpeedMultiplier(float mult);
     void setEndOfPattern(bool ending);
 
     uint32_t getCompletedCount() const;

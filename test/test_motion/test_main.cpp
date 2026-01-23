@@ -338,7 +338,7 @@ bool testSpeedMultiplier() {
         advanceMicros(20000);
         iterations++;
     }
-    double fullSpeedTime = g_mockMicros.load() / 1000000.0;
+    float fullSpeedTime = g_mockMicros.load() / 1000000.0f;
     planner.stop();
 
     if (iterations >= maxIterations) {
@@ -366,7 +366,7 @@ bool testSpeedMultiplier() {
         advanceMicros(20000);
         iterations++;
     }
-    double halfSpeedTime = g_mockMicros.load() / 1000000.0;
+    float halfSpeedTime = g_mockMicros.load() / 1000000.0f;
 
     if (iterations >= maxIterations) {
         std::cout << "FAIL: Half speed run timeout" << std::endl;
@@ -377,7 +377,7 @@ bool testSpeedMultiplier() {
     std::cout << "Half speed time: " << halfSpeedTime << "s" << std::endl;
 
     // Half speed should take roughly twice as long (with some tolerance)
-    double ratio = halfSpeedTime / fullSpeedTime;
+    float ratio = halfSpeedTime / fullSpeedTime;
     bool passed = ratio > 1.5 && ratio < 2.5;
     std::cout << "Time ratio: " << ratio << (passed ? " PASS" : " FAIL") << std::endl;
 
@@ -424,7 +424,7 @@ bool waitForTarget(const MotionPlanner& planner, int32_t targetT, int32_t target
 
 // Helper to run a loaded pattern and return the total time
 // Verifies all segments complete and final position is correct
-double runPatternFileInternal(MotionPlanner& planner, ThrReader& reader,
+float runPatternFileInternal(MotionPlanner& planner, ThrReader& reader,
                              const std::vector<std::pair<int32_t, int32_t>>& expectedStepTargets) {
     planner.start();
 
@@ -492,7 +492,7 @@ bool testPatternFile(const std::string& filepath) {
         expectedStepTargets.push_back({targetT, targetR});
     }
 
-    auto runAtSpeed = [&](float speedMult) -> double {
+    auto runAtSpeed = [&](float speedMult) -> float {
         resetMock();
         MotionPlanner planner;
         planner.init(STEPS_PER_MM_R, STEPS_PER_RAD_T, R_MAX,
@@ -531,7 +531,7 @@ bool testPatternFile(const std::string& filepath) {
     };
 
     std::cout << "Running at full speed (1.0)..." << std::endl;
-    double time10 = runAtSpeed(1.0f);
+    float time10 = runAtSpeed(1.0f);
     if (time10 < 0) {
         std::cout << "FAIL: Full speed run failed" << std::endl;
         return false;
@@ -546,14 +546,14 @@ bool testPatternFile(const std::string& filepath) {
     }
 
     std::cout << "Running at half speed (0.5)..." << std::endl;
-    double time05 = runAtSpeed(0.5f);
+    float time05 = runAtSpeed(0.5f);
     if (time05 < 0) {
         std::cout << "FAIL: Half speed run failed" << std::endl;
         return false;
     }
     std::cout << "Time: " << time05 << "s" << std::endl;
 
-    double ratio = time05 / time10;
+    float ratio = time05 / time10;
     bool ratioPassed = ratio > 1.2; // Should be significantly slower
     if (ratioPassed) {
         std::cout << "PASS" << std::endl;

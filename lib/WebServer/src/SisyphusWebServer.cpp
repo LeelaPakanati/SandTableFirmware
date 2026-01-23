@@ -325,7 +325,7 @@ void SisyphusWebServer::loop() {
 void SisyphusWebServer::broadcastSinglePosition(AsyncEventSourceClient *client) {
     // Get actual position (thread-safe now)
     PolarCord_t actualPos = m_polarControl->getActualPosition();
-    double maxRho = m_polarControl->getMaxRho();
+    float maxRho = m_polarControl->getMaxRho();
 
     // Convert to normalized Cartesian coordinates (0-1 range)
     CartesianCord_t norm = PolarUtils::toNormalizedCartesian(actualPos, maxRho);
@@ -361,7 +361,7 @@ void SisyphusWebServer::broadcastPosition() {
 
     // Get actual position
     PolarCord_t actualPos = m_polarControl->getActualPosition();
-    double maxRho = m_polarControl->getMaxRho();
+    float maxRho = m_polarControl->getMaxRho();
     CartesianCord_t norm = PolarUtils::toNormalizedCartesian(actualPos, maxRho);
 
     // Only broadcast if changed significantly to reduce network load
@@ -1100,7 +1100,7 @@ void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
 
     // Get actual position from stepper motors (used for display)
     PolarCord_t actualPos = m_polarControl->getActualPosition();
-    double maxRho = m_polarControl->getMaxRho();
+    float maxRho = m_polarControl->getMaxRho();
 
     // Debug log (throttled)
     static unsigned long lastLog = 0;
@@ -1220,17 +1220,17 @@ void SisyphusWebServer::handleTuningMotionSet(AsyncWebServerRequest *request) {
     MotionSettings settings = m_polarControl->getMotionSettings();
 
     if (request->hasParam("rMaxVelocity", true))
-        settings.rMaxVelocity = request->getParam("rMaxVelocity", true)->value().toDouble();
+        settings.rMaxVelocity = request->getParam("rMaxVelocity", true)->value().toFloat();
     if (request->hasParam("rMaxAccel", true))
-        settings.rMaxAccel = request->getParam("rMaxAccel", true)->value().toDouble();
+        settings.rMaxAccel = request->getParam("rMaxAccel", true)->value().toFloat();
     if (request->hasParam("rMaxJerk", true))
-        settings.rMaxJerk = request->getParam("rMaxJerk", true)->value().toDouble();
+        settings.rMaxJerk = request->getParam("rMaxJerk", true)->value().toFloat();
     if (request->hasParam("tMaxVelocity", true))
-        settings.tMaxVelocity = request->getParam("tMaxVelocity", true)->value().toDouble();
+        settings.tMaxVelocity = request->getParam("tMaxVelocity", true)->value().toFloat();
     if (request->hasParam("tMaxAccel", true))
-        settings.tMaxAccel = request->getParam("tMaxAccel", true)->value().toDouble();
+        settings.tMaxAccel = request->getParam("tMaxAccel", true)->value().toFloat();
     if (request->hasParam("tMaxJerk", true))
-        settings.tMaxJerk = request->getParam("tMaxJerk", true)->value().toDouble();
+        settings.tMaxJerk = request->getParam("tMaxJerk", true)->value().toFloat();
 
     m_polarControl->setMotionSettings(settings);
     m_polarControl->saveTuningSettings();

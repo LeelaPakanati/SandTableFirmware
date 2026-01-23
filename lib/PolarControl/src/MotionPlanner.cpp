@@ -481,7 +481,7 @@ void MotionPlanner::process() {
                 getCurrentPosition(curT, curR);
                 printf("[DEBUG] Segment %u complete. count=%d, target=(%.3f, %.3f), actual=(%.3f, %.3f), duration=%.3f, elapsed=%.3f\n",
                        m_completedCount, m_segmentCount, current.targetTheta, current.targetRho,
-                       curT, curR, (double)current.duration, (double)elapsed);
+                       curT, curR, current.duration, elapsed);
             }
 
             // Segment complete

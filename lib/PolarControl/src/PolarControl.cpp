@@ -389,8 +389,8 @@ void PolarControl::forceStop() {
 void PolarControl::feedPlanner() {
     // Mode 1: Generator (Testing/Clear)
     if (m_posGen) {
-        int added = 0;
-        while (m_planner.hasSpace() && added < 4) {
+        bool addedAny = false;
+        while (m_planner.hasSpace()) {
             PolarCord_t next = m_posGen->getNextPos();
 
             if (next.isNan()) {
@@ -400,9 +400,9 @@ void PolarControl::feedPlanner() {
 
             m_planner.setEndOfPattern(false);
             m_planner.addSegment(next.theta, next.rho);
-            added++;
+            addedAny = true;
         }
-        if (added > 0) m_planner.recalculate();
+        if (addedAny) m_planner.recalculate();
         return;
     }
 
@@ -658,13 +658,13 @@ bool PolarControl::loadTuningSettings() {
 
 class TestThetaContinuousGen : public PosGen {
 public:
-    TestThetaContinuousGen(double fixedRho) : m_rho(fixedRho), m_phase(0) {}
+    TestThetaContinuousGen(float fixedRho) : m_rho(fixedRho), m_phase(0) {}
 
     PolarCord_t getNextPos() override {
         // Phase 0: Rotate 5 full turns forward in one go
         // Phase 1: Rotate 5 full turns back in one go
 
-        const double FULL_ROTATION = 2.0 * PI;
+        const float FULL_ROTATION = 2.0 * PI;
         const int ROTATIONS = 5;
 
         if (m_phase == 0) {
@@ -684,19 +684,19 @@ public:
         return {std::nan(""), std::nan("")};
     }
 private:
-    double m_rho;
+    float m_rho;
     int m_phase;
 };
 
 class TestThetaStressGen : public PosGen {
 public:
-    TestThetaStressGen(double fixedRho) : m_rho(fixedRho), m_phase(0), m_step(0) {}
+    TestThetaStressGen(float fixedRho) : m_rho(fixedRho), m_phase(0), m_step(0) {}
 
     PolarCord_t getNextPos() override {
-        const double DEGREES_TO_RADIANS = PI / 180.0;
+        const float DEGREES_TO_RADIANS = PI / 180.0f;
 
         // Varying move sizes in degrees
-        static const double MOVE_SIZES[] = {
+        static const float MOVE_SIZES[] = {
             0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0, 90.0,
             90.0, 60.0, 45.0, 30.0, 20.0, 15.0, 10.0, 5.0, 2.0, 1.0, 0.5
         };
@@ -711,7 +711,7 @@ public:
             } else {
                 int sizeIdx = m_step / 2;
                 bool goingOut = (m_step % 2 == 0);
-                double moveSize = MOVE_SIZES[sizeIdx] * DEGREES_TO_RADIANS;
+                float moveSize = MOVE_SIZES[sizeIdx] * DEGREES_TO_RADIANS;
 
                 if (goingOut) {
                     m_currentTheta = moveSize;
@@ -725,7 +725,7 @@ public:
 
         if (m_phase == 1) {
             // Quick random-ish reversals at different amplitudes
-            static const double QUICK_SIZES[] = {5.0, 45.0, 2.0, 90.0, 10.0, 30.0, 1.0, 60.0, 15.0, 0.5};
+            static const float QUICK_SIZES[] = {5.0f, 45.0f, 2.0f, 90.0f, 10.0f, 30.0f, 1.0f, 60.0f, 15.0f, 0.5f};
             static const int NUM_QUICK = sizeof(QUICK_SIZES) / sizeof(QUICK_SIZES[0]);
 
             if (m_step >= NUM_QUICK * 2) {
@@ -734,7 +734,7 @@ public:
 
             int sizeIdx = m_step / 2;
             bool goingOut = (m_step % 2 == 0);
-            double moveSize = QUICK_SIZES[sizeIdx] * DEGREES_TO_RADIANS;
+            float moveSize = QUICK_SIZES[sizeIdx] * DEGREES_TO_RADIANS;
 
             if (goingOut) {
                 m_currentTheta = moveSize;
@@ -747,19 +747,19 @@ public:
         return {std::nan(""), std::nan("")};
     }
 private:
-    double m_rho;
-    double m_currentTheta = 0;
+    float m_rho;
+    float m_currentTheta = 0.0f;
     int m_phase;
     int m_step;
 };
 
 class TestRhoContinuousGen : public PosGen {
 public:
-    TestRhoContinuousGen(double maxRho) : m_maxRho(maxRho), m_phase(0) {}
+    TestRhoContinuousGen(float maxRho) : m_maxRho(maxRho), m_phase(0) {}
 
     PolarCord_t getNextPos() override {
-        const double CENTER = m_maxRho / 2;
-        const double MIN_RHO = 20.0;
+        const float CENTER = m_maxRho / 2.0f;
+        const float MIN_RHO = 20.0f;
 
         if (m_phase == 0) {
             // Move outward to max in one go
@@ -781,23 +781,23 @@ public:
         return {std::nan(""), std::nan("")};
     }
 private:
-    double m_maxRho;
+    float m_maxRho;
     int m_phase;
 };
 
 class TestRhoStressGen : public PosGen {
 public:
-    TestRhoStressGen(double maxRho) : m_maxRho(maxRho), m_phase(0), m_step(0) {
+    TestRhoStressGen(float maxRho) : m_maxRho(maxRho), m_phase(0), m_step(0) {
         m_currentRho = maxRho / 2;
     }
 
     PolarCord_t getNextPos() override {
-        const double CENTER = m_maxRho / 2;
+        const float CENTER = m_maxRho / 2.0;
 
         // Varying move sizes in mm
-        static const double MOVE_SIZES[] = {
-            1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 50.0, 75.0, 100.0,
-            100.0, 75.0, 50.0, 30.0, 20.0, 10.0, 5.0, 2.0, 1.0
+        static const float MOVE_SIZES[] = {
+            1.0f, 2.0f, 5.0f, 10.0f, 20.0f, 30.0f, 50.0f, 75.0f, 100.0f,
+            100.0f, 75.0f, 50.0f, 30.0f, 20.0f, 10.0f, 5.0f, 2.0f, 1.0f
         };
         static const int NUM_MOVE_SIZES = sizeof(MOVE_SIZES) / sizeof(MOVE_SIZES[0]);
 
@@ -809,7 +809,7 @@ public:
             } else {
                 int sizeIdx = m_step / 2;
                 bool goingOut = (m_step % 2 == 0);
-                double moveSize = MOVE_SIZES[sizeIdx];
+                float moveSize = MOVE_SIZES[sizeIdx];
 
                 if (goingOut) {
                     m_currentRho = CENTER + moveSize;
@@ -823,7 +823,7 @@ public:
 
         if (m_phase == 1) {
             // Quick random-ish reversals at different amplitudes
-            static const double QUICK_SIZES[] = {10.0, 50.0, 5.0, 100.0, 20.0, 75.0, 2.0, 30.0, 1.0, 60.0};
+            static const float QUICK_SIZES[] = {10.0f, 50.0f, 5.0f, 100.0f, 20.0f, 75.0f, 2.0f, 30.0f, 1.0f, 60.0f};
             static const int NUM_QUICK = sizeof(QUICK_SIZES) / sizeof(QUICK_SIZES[0]);
 
             if (m_step >= NUM_QUICK * 2) {
@@ -832,7 +832,7 @@ public:
 
             int sizeIdx = m_step / 2;
             bool goingOut = (m_step % 2 == 0);
-            double moveSize = QUICK_SIZES[sizeIdx];
+            float moveSize = QUICK_SIZES[sizeIdx];
 
             if (goingOut) {
                 m_currentRho = CENTER + moveSize;
@@ -845,8 +845,8 @@ public:
         return {std::nan(""), std::nan("")};
     }
 private:
-    double m_maxRho;
-    double m_currentRho;
+    float m_maxRho;
+    float m_currentRho;
     int m_phase;
     int m_step;
 };

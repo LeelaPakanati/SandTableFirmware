@@ -21,7 +21,7 @@
 #endif
 
 // Configuration constants
-static constexpr int SEGMENT_BUFFER_SIZE = 16;
+static constexpr int SEGMENT_BUFFER_SIZE = 8;
 static constexpr int STEP_QUEUE_SIZE = 512;
 static constexpr float MIN_SEGMENT_DURATION = 0.010f;  // 10ms minimum
 static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
