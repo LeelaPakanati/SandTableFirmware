@@ -19,7 +19,7 @@ if timeout 30s $PROG; then
     echo "Synthetic Tests: PASS"
 else
     echo "Synthetic Tests: FAIL"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
+    exit 1
 fi
 
 # 2. Run pattern file tests
@@ -44,7 +44,7 @@ for f in "$PATTERN_DIR"/*.thr; do
         echo "PASS: $filename"
     else
         echo "FAIL: $filename"
-        FAIL_COUNT=$((FAIL_COUNT + 1))
+        exit 1
     fi
     count=$((count + 1))
 done

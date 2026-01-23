@@ -28,6 +28,14 @@ inline void setMicros(uint64_t us) {
     g_mockMicros.store(us);
 }
 
+inline void resetMock() {
+    g_mockMicros.store(0);
+    g_timerActive = false;
+    g_timerCallback = nullptr;
+    g_timerArg = nullptr;
+    g_timerPeriod = 0;
+}
+
 // Advance time and fire timer callbacks if active
 inline void advanceMicros(uint32_t us) {
     if (!g_timerActive || g_timerPeriod == 0) {
@@ -114,6 +122,7 @@ inline int esp_timer_create(const esp_timer_create_args_t* args, esp_timer_handl
 
 inline int esp_timer_start_periodic(esp_timer_handle_t handle, uint64_t period_us) {
     (void)handle;
+    // printf("[MOCK] Timer started: period=%lu\n", (unsigned long)period_us);
     g_timerPeriod = period_us;
     g_timerActive = true;
     return 0;

@@ -18,12 +18,12 @@
 
 // Tuning settings structures
 struct MotionSettings {
-  double rMaxVelocity = 30.0;   // mm/s
+  double rMaxVelocity = 10.0;   // mm/s
   double rMaxAccel = 20.0;      // mm/s²
-  double rMaxJerk = 100.0;      // mm/s³
-  double tMaxVelocity = 1.0;    // rad/s
-  double tMaxAccel = 2.0;       // rad/s²
-  double tMaxJerk = 10.0;       // rad/s³
+  double rMaxJerk = 30.0;       // mm/s³
+  double tMaxVelocity = 0.25;   // rad/s
+  double tMaxAccel = 1.0;       // rad/s²
+  double tMaxJerk = 5.0;        // rad/s³
 };
 
 struct DriverSettings {
