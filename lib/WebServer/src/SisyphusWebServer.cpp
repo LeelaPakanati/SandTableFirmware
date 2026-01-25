@@ -184,7 +184,7 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
 
             if (found) {
                 AsyncWebServerResponse *response = request->beginResponse(SD, pngPath, "image/png");
-                response->addHeader("Cache-Control", "no-cache");
+                response->addHeader("Cache-Control", "public, max-age=31536000, immutable");
                 
                 if (imgTime > 0) {
                     char timeStr[32];

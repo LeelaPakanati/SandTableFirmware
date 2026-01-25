@@ -1317,6 +1317,34 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 items.forEach(item => {
                     item.classList.toggle('selected', item.getAttribute('data-name') === filename);
                 });
+                this.preloadPatternImage(filename);
+            }
+
+            preloadPatternImage(filename) {
+                if (!filename || filename === 'None') return;
+                const t = this.fileTimes[filename] || 0;
+                const preload = new Image();
+                preload.src = `/api/pattern/image?file=${encodeURIComponent(filename)}&t=${t}`;
+            }
+
+            setOverlayImage(filename) {
+                const img = document.getElementById('pattern-overlay');
+                if (!filename || filename === 'None') {
+                    img.style.display = 'none';
+                    img.src = '';
+                    return;
+                }
+                const t = this.fileTimes[filename] || 0;
+                const nextSrc = `/api/pattern/image?file=${encodeURIComponent(filename)}&t=${t}`;
+                const preload = new Image();
+                preload.onload = () => {
+                    img.src = nextSrc;
+                    img.style.display = 'block';
+                };
+                preload.onerror = () => {
+                    img.style.display = 'none';
+                };
+                preload.src = nextSrc;
             }
 
             async loadSystemInfo() {
@@ -1338,17 +1366,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 if (currentPattern !== this.lastPatternName) {
                     this.clearPath();
                     this.lastPatternName = currentPattern;
-                    
-                    // Update overlay image
-                    const img = document.getElementById('pattern-overlay');
-                    if (currentPattern !== 'None') {
-                        const t = this.fileTimes[currentPattern] || 0;
-                        img.src = `/api/pattern/image?file=${encodeURIComponent(currentPattern)}&t=${t}`;
-                        img.style.display = 'block';
-                    } else {
-                        img.style.display = 'none';
-                        img.src = '';
-                    }
+                    this.setOverlayImage(currentPattern);
                 }
 
                 document.getElementById('current-pattern').textContent = currentPattern.replace('.thr', '');
