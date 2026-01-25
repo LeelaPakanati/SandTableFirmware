@@ -18,45 +18,6 @@ static String resolvePatternPath(const String& filename) {
     return path;
 }
 
-// Global WebLogger instance
-WebLogger webLogger;
-
-// WebLogger implementation
-void WebLogger::ensureMutex() {
-    if (m_mutex == NULL) {
-        m_mutex = xSemaphoreCreateMutex();
-    }
-}
-
-size_t WebLogger::write(uint8_t c) {
-    ensureMutex();
-    xSemaphoreTake(m_mutex, portMAX_DELAY);
-    if (m_buffer.length() < MAX_LOG_SIZE) {
-        m_buffer += (char)c;
-    }
-    xSemaphoreGive(m_mutex);
-    return 1;
-}
-
-size_t WebLogger::write(const uint8_t *buffer, size_t size) {
-    ensureMutex();
-    xSemaphoreTake(m_mutex, portMAX_DELAY);
-    for (size_t i = 0; i < size && m_buffer.length() < MAX_LOG_SIZE; i++) {
-        m_buffer += (char)buffer[i];
-    }
-    xSemaphoreGive(m_mutex);
-    return size;
-}
-
-String WebLogger::getNewLogs() {
-    ensureMutex();
-    xSemaphoreTake(m_mutex, portMAX_DELAY);
-    String result = m_buffer;
-    m_buffer = "";
-    xSemaphoreGive(m_mutex);
-    return result;
-}
-
 SisyphusWebServer::SisyphusWebServer(uint16_t port)
     : m_server(port),
       m_events("/api/console"),

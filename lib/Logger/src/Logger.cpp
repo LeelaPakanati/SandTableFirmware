@@ -3,6 +3,32 @@
 // Global WebLogger instance
 WebLogger webLogger;
 
+#ifdef NATIVE_BUILD
+WebLogger::WebLogger() = default;
+
+size_t WebLogger::write(uint8_t c) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_buffer.size() < MAX_LOG_SIZE) {
+        m_buffer.push_back(static_cast<char>(c));
+    }
+    return 1;
+}
+
+size_t WebLogger::write(const uint8_t *buffer, size_t size) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (size_t i = 0; i < size && m_buffer.size() < MAX_LOG_SIZE; i++) {
+        m_buffer.push_back(static_cast<char>(buffer[i]));
+    }
+    return size;
+}
+
+String WebLogger::getNewLogs() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    String result = m_buffer;
+    m_buffer.clear();
+    return result;
+}
+#else
 // WebLogger implementation
 WebLogger::WebLogger() {
     m_mutex = xSemaphoreCreateMutex();
@@ -42,3 +68,4 @@ String WebLogger::getNewLogs() {
     xSemaphoreGive(m_mutex);
     return result;
 }
+#endif
