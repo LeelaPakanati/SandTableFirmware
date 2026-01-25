@@ -326,7 +326,7 @@ const char TUNING_UI_HTML[] PROGMEM = R"rawliteral(
                     <input type="number" id="tune-theta-holdDelay" min="0" max="15">
                 </div>
                 <div class="form-group">
-                    <label>Microsteps</label>
+                    <label>Microsteps (Rho)</label>
                     <select id="tune-theta-microsteps">
                         <option value="1">1 (full step)</option>
                         <option value="2">2</option>
