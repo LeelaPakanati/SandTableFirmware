@@ -71,16 +71,9 @@ void motorTask(void *parameter) {
 
 void webTask(void *parameter) {
     LOG("Web logic task started on Core %d\r\n", xPortGetCoreID());
-    unsigned long lastHeartbeat = 0;
     while (true) {
         webServer.loop();
         ArduinoOTA.handle();
-        
-        if (millis() - lastHeartbeat > 5000) {
-            lastHeartbeat = millis();
-            LOG("WebTask Heartbeat\r\n");
-        }
-        
         vTaskDelay(10); // Run at ~100Hz, sufficient for UI updates
     }
 }
@@ -96,7 +89,7 @@ void setup() {
     if (!initSDCard()) {
         LOG("WARNING: Running without SD card storage!\r\n");
     } else {
-        listSDFiles(); // This function likely prints to Serial, leave for now or update it later if it's in another file
+        listSDFiles();
     }
 
     // WiFi Setup
