@@ -23,11 +23,3 @@ void LEDController::setBrightness(uint8_t brightness) {
 uint8_t LEDController::getBrightness() {
     return m_brightness;
 }
-
-void LEDController::on() {
-    setBrightness(255);
-}
-
-void LEDController::off() {
-    setBrightness(0);
-}

@@ -41,10 +41,8 @@ public:
 
   // Playlist control
   void reset();
-  bool hasNext();
-  bool hasPrevious();
-  NextPatternResult getNextPattern();
-  int getCurrentIndex() const { return m_currentIndex; }
+      bool hasNext();
+      NextPatternResult getNextPattern();  int getCurrentIndex() const { return m_currentIndex; }
   void setCurrentIndex(int index);
 
   // Skip controls

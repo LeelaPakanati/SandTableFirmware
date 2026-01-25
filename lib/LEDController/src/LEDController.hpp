@@ -7,8 +7,6 @@ public:
     void begin();
     void setBrightness(uint8_t brightness); // 0-255
     uint8_t getBrightness();
-    void on();
-    void off();
 
 private:
     uint8_t m_pin;

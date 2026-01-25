@@ -82,12 +82,6 @@ bool PlaylistManager::hasNext() {
   return m_currentIndex < (int)m_playlist.size() - 1;
 }
 
-bool PlaylistManager::hasPrevious() {
-  if (m_playlist.empty()) return false;
-  if (m_loop) return true;
-  return m_currentIndex > 0;
-}
-
 NextPatternResult PlaylistManager::getNextPattern() {
   NextPatternResult result;
   result.needsClearing = false;

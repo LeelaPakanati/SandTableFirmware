@@ -3,6 +3,8 @@
 #include <vector>
 #include <ArduinoJson.h>
 #include <freertos/semphr.h>
+#include <atomic>
+#include <Print.h>
 #include <SDCard.hpp>
 #include <PolarControl.hpp>
 #include <LEDController.hpp>
@@ -14,6 +16,7 @@ public:
     SisyphusWebServer(uint16_t port = 80);
     void begin(PolarControl *polarControl, LEDController *ledController);
     void loop(); // Check for pattern queue processing
+    void getRequestStats(uint32_t& total, uint32_t& inflight) const;
 
 private:
     AsyncWebServer m_server;
@@ -89,16 +92,32 @@ private:
 
     // Helper methods
     void processPatternQueue();
-    void broadcastLogs();
     void broadcastPosition(); // New streaming method
     void broadcastSinglePosition(AsyncEventSourceClient *client = nullptr);
-    String buildStatusJSON();
-    String buildFileListJSON();
-    String buildSystemInfoJSON();
+    void writeStatusJSON(Print& out);
+    void writeFileListJSON(Print& out);
+    void writeSystemInfoJSON(Print& out);
     String getStateString();
+    void noteRequest(AsyncWebServerRequest *request);
+    
+    void updateFileListCache();
 
-    unsigned long m_lastLogBroadcast = 0;
     unsigned long m_lastPosBroadcast = 0; // Timer for position streaming
     float m_lastBroadcastX = -1.0f;
     float m_lastBroadcastY = -1.0f;
+    std::atomic<uint32_t> m_requestTotal{0};
+    std::atomic<uint32_t> m_requestInflight{0};
+
+    std::atomic<bool> m_fileListDirty; // Flag to trigger regeneration of cache
+
+    struct FileEntry {
+        String name;
+        size_t size;
+        time_t time;
+        bool hasImage;
+        time_t imageTime;
+        bool isDirectory;
+    };
+    std::vector<FileEntry> m_fileCache;
+    SemaphoreHandle_t m_cacheMutex = nullptr;
 };

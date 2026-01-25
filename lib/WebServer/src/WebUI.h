@@ -976,19 +976,6 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 </div>
             </div>
         </div>
-
-        <div class="card">
-            <div class="console-header">
-                <div class="card-title" style="margin-bottom: 0;">Console</div>
-                <div>
-                    <span id="console-status" class="console-status console-disconnected">Disconnected</span>
-                    <button class="btn-secondary" id="btn-clear-console" style="padding: 6px 12px; font-size: 0.8em; margin-left: 8px;">Clear</button>
-                </div>
-            </div>
-            <div class="console-container" id="console-output">
-                <div class="console-line">Connecting...</div>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -1007,9 +994,11 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.setupCanvas();
                 this.setupEventListeners();
                 this.setupUploadHandlers();
-                this.setupConsole();
+                this.connectStream();
                 await this.loadFileList();
-                await this.loadSystemInfo();
+                const systemInfo = await this.loadSystemInfo();
+                const status = await this.getStatus();
+                this.updateUI(status);
                 await this.loadPlaylistStatus();
                 this.startStatusPolling();
             }
@@ -1086,53 +1075,18 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('tab-playlist').style.display = tabName === 'playlist' ? 'block' : 'none';
             }
 
-            setupConsole() {
-                this.consoleOutput = document.getElementById('console-output');
-                this.consoleStatus = document.getElementById('console-status');
-                this.maxConsoleLines = 200;
-
-                document.getElementById('btn-clear-console').addEventListener('click', () => {
-                    this.consoleOutput.innerHTML = '';
-                });
-
-                this.connectConsole();
-            }
-
-            connectConsole() {
-                this.eventSource = new EventSource('/api/console');
-
-                this.eventSource.onopen = () => {
-                    this.consoleStatus.textContent = 'Connected';
-                    this.consoleStatus.className = 'console-status console-connected';
-                };
+            connectStream() {
+                this.eventSource = new EventSource('/api/stream');
 
                 this.eventSource.onerror = () => {
-                    this.consoleStatus.textContent = 'Disconnected';
-                    this.consoleStatus.className = 'console-status console-disconnected';
-                    setTimeout(() => this.connectConsole(), 2000);
+                    setTimeout(() => this.connectStream(), 2000);
                 };
 
-                this.eventSource.addEventListener('log', (e) => this.appendToConsole(e.data));
                 this.eventSource.addEventListener('pos', (e) => {
                     try {
                         this.drawStreamPosition(JSON.parse(e.data));
                     } catch (err) {}
                 });
-            }
-
-            appendToConsole(text) {
-                const lines = text.split('\n');
-                for (const line of lines) {
-                    if (line.trim() === '') continue;
-                    const div = document.createElement('div');
-                    div.className = 'console-line';
-                    div.textContent = line;
-                    this.consoleOutput.appendChild(div);
-                }
-                while (this.consoleOutput.children.length > this.maxConsoleLines) {
-                    this.consoleOutput.removeChild(this.consoleOutput.firstChild);
-                }
-                this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
             }
 
             setupCanvas() {
@@ -1349,7 +1303,6 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     
                     return `
                     <div class="pattern-list-item ${isSelected ? 'selected' : ''}" data-name="${file.name}" onclick="controller.selectPattern('${file.name}')">
-                        <img src="${thumbUrl}" class="pattern-thumb" onerror="this.style.opacity=0.3" loading="lazy">
                         <div class="pattern-info">
                             <div class="pattern-name">${displayName}</div>
                             <div class="pattern-size">${file.size > 0 ? Math.round(file.size / 1024) + ' KB' : ''}</div>
@@ -1373,6 +1326,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('wifi-ssid').textContent = data.wifi.ssid;
                 document.getElementById('wifi-ip').textContent = data.wifi.ip;
                 document.getElementById('wifi-rssi').textContent = data.wifi.rssi + ' dBm';
+                return data;
             }
 
             updateUI(status) {

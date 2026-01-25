@@ -3,10 +3,11 @@
 
 #include <WiFiManager.h>
 #include <ArduinoOTA.h>
+#include <esp_heap_caps.h>
+#include <freertos/task.h>
 #include <PolarControl.hpp>
 #include <SisyphusWebServer.hpp>
 #include <LEDController.hpp>
-#include <ClearingPatternGen.hpp>
 
 #define AP_SSID "SisyphusTable"
 #define AP_PWD "sandpatterns"
@@ -26,9 +27,6 @@ LEDController ledController(2);
 
 TaskHandle_t motorTaskHandle = NULL;
 TaskHandle_t webTaskHandle = NULL;
-
-volatile unsigned long g_motorLoopCount = 0;
-volatile unsigned long g_lastPositionPrint = 0;
 
 void motorTask(void *parameter) {
     LOG("Motor task started on Core %d\r\n", xPortGetCoreID());
@@ -71,9 +69,51 @@ void motorTask(void *parameter) {
 
 void webTask(void *parameter) {
     LOG("Web logic task started on Core %d\r\n", xPortGetCoreID());
+    unsigned long lastStats = millis();
+    uint32_t loopCount = 0;
+    uint64_t totalLoopUs = 0;
+    uint32_t maxLoopUs = 0;
     while (true) {
+        uint32_t startUs = micros();
         webServer.loop();
         ArduinoOTA.handle();
+        uint32_t loopUs = micros() - startUs;
+        totalLoopUs += loopUs;
+        loopCount++;
+        if (loopUs > maxLoopUs) maxLoopUs = loopUs;
+
+        unsigned long now = millis();
+        if (now - lastStats >= 5000) {
+            uint32_t reqTotal = 0;
+            uint32_t reqInflight = 0;
+            webServer.getRequestStats(reqTotal, reqInflight);
+
+            uint32_t fileStack = polarControl.getFileTaskHighWater();
+            UBaseType_t webStack = uxTaskGetStackHighWaterMark(webTaskHandle);
+            UBaseType_t motorStack = uxTaskGetStackHighWaterMark(motorTaskHandle);
+
+            uint32_t freeHeap = ESP.getFreeHeap();
+            uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+            float avgLoopUs = loopCount ? static_cast<float>(totalLoopUs) / loopCount : 0.0f;
+
+            LOG("[WEB Core%d] Loop avg: %.0fus max: %uus | Heap: %u | Largest: %u | Stack W/M/F: %u/%u/%u | Req total: %u inflight: %u\r\n",
+                xPortGetCoreID(),
+                avgLoopUs,
+                maxLoopUs,
+                freeHeap,
+                largestBlock,
+                static_cast<unsigned int>(webStack),
+                static_cast<unsigned int>(motorStack),
+                static_cast<unsigned int>(fileStack),
+                reqTotal,
+                reqInflight);
+
+
+            lastStats = now;
+            loopCount = 0;
+            totalLoopUs = 0;
+            maxLoopUs = 0;
+        }
         vTaskDelay(10); // Run at ~100Hz, sufficient for UI updates
     }
 }
@@ -160,7 +200,7 @@ void setup() {
     xTaskCreatePinnedToCore(
         motorTask,
         "MotorTask",
-        16384,
+        4096,
         NULL,
         1,
         &motorTaskHandle,
@@ -172,7 +212,7 @@ void setup() {
     xTaskCreatePinnedToCore(
         webTask,
         "WebTask",
-        16384,
+        8192,
         NULL,
         1,
         &webTaskHandle,

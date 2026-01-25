@@ -1,29 +1,38 @@
 #pragma once
 #include <ArduinoJson.h>
 #include <SD.h>
+#include <Print.h>
 #include "PolarControl.hpp"
 #include "LEDController.hpp"
 
 class JsonHelpers {
 public:
-    static String buildStatusJSON(PolarControl* polarControl, LEDController* ledController, const String& currentPattern) {
-        JsonDocument doc;
-        doc["state"] = getStateString(polarControl->getState());
-        doc["currentPattern"] = currentPattern;
-        doc["progress"] = polarControl->getProgressPercent();
+    static void writeStatusJSON(Print& out, PolarControl* polarControl, LEDController* ledController, const String& currentPattern) {
+        String state = getStateString(polarControl->getState());
+        int progress = polarControl->getProgressPercent();
         uint8_t brightness = ledController->getBrightness();
-        doc["ledBrightness"] = map(brightness, 0, 255, 0, 100);
-        doc["heap"] = ESP.getFreeHeap();
-        doc["uptime"] = millis() / 1000;
+        int brightnessPercent = map(brightness, 0, 255, 0, 100);
+        uint32_t heap = ESP.getFreeHeap();
+        uint32_t uptime = millis() / 1000;
 
-        String output;
-        serializeJson(doc, output);
-        return output;
+        out.print("{\"state\":\"");
+        out.print(state);
+        out.print("\",\"currentPattern\":\"");
+        out.print(currentPattern);
+        out.print("\",\"progress\":");
+        out.print(progress);
+        out.print(",\"ledBrightness\":");
+        out.print(brightnessPercent);
+        out.print(",\"heap\":");
+        out.print(heap);
+        out.print(",\"uptime\":");
+        out.print(uptime);
+        out.print("}");
     }
 
-    static String buildFileListJSON() {
-        JsonDocument doc;
-        JsonArray files = doc["files"].to<JsonArray>();
+    static void writeFileListJSON(Print& out) {
+        out.print("{\"files\":[");
+        bool first = true;
 
         File root = SD.open("/patterns");
         if (root) {
@@ -34,20 +43,26 @@ public:
 
                 if (!file.isDirectory()) {
                     if (name.endsWith(".thr")) {
-                        JsonObject fileObj = files.add<JsonObject>();
-                        fileObj["name"] = name;
-                        fileObj["size"] = file.size();
-                        fileObj["time"] = file.getLastWrite();
+                        JsonDocument entry;
+                        entry["name"] = name;
+                        entry["size"] = file.size();
+                        entry["time"] = file.getLastWrite();
+                        if (!first) out.print(',');
+                        serializeJson(entry, out);
+                        first = false;
                     }
                 } else {
                     String patternFile = name + ".thr";
                     String innerPath = "/patterns/" + name + "/" + patternFile;
                     if (SD.exists(innerPath)) {
                         File innerFile = SD.open(innerPath);
-                        JsonObject fileObj = files.add<JsonObject>();
-                        fileObj["name"] = patternFile;
-                        fileObj["size"] = innerFile.size();
-                        fileObj["time"] = innerFile.getLastWrite();
+                        JsonDocument entry;
+                        entry["name"] = patternFile;
+                        entry["size"] = innerFile.size();
+                        entry["time"] = innerFile.getLastWrite();
+                        if (!first) out.print(',');
+                        serializeJson(entry, out);
+                        first = false;
                         innerFile.close();
                     }
                 }
@@ -56,13 +71,10 @@ public:
             }
             root.close();
         }
-
-        String output;
-        serializeJson(doc, output);
-        return output;
+        out.print("]}");
     }
 
-    static String buildSystemInfoJSON() {
+    static void writeSystemInfoJSON(Print& out) {
         JsonDocument doc;
         doc["heap"] = ESP.getFreeHeap();
         doc["uptime"] = millis() / 1000;
@@ -71,10 +83,7 @@ public:
         wifi["ssid"] = WiFi.SSID();
         wifi["ip"] = WiFi.localIP().toString();
         wifi["rssi"] = WiFi.RSSI();
-
-        String output;
-        serializeJson(doc, output);
-        return output;
+        serializeJson(doc, out);
     }
 
     static String getStateString(PolarControl::State_t state) {

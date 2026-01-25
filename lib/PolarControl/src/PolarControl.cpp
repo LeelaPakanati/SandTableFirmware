@@ -1,9 +1,9 @@
 #include "PolarControl.hpp"
 #include "PolarUtils.hpp"
 #include "MakeUnique.hpp"
-#include "StreamingFileCache.hpp"
 #include "Logger.hpp"
 #include <cmath>
+#include <cstdlib>
 #include <SD.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
@@ -60,7 +60,7 @@ void PolarControl::begin() {
     xTaskCreatePinnedToCore(
         fileReadTask,
         "FileReadTask",
-        16384,
+        8192,
         this,
         1,
         &m_fileTaskHandle,
@@ -433,6 +433,13 @@ int PolarControl::getProgressPercent() const {
 
 void PolarControl::forceStop() {
     m_planner.stop();
+}
+
+uint32_t PolarControl::getFileTaskHighWater() const {
+    if (!m_fileTaskHandle) {
+        return 0;
+    }
+    return static_cast<uint32_t>(uxTaskGetStackHighWaterMark(m_fileTaskHandle));
 }
 
 // ============================================================================
@@ -962,9 +969,7 @@ void PolarControl::testRhoStress() {
 // ============================================================================
 
 // Helper to dump driver info to JSON
-static String dumpDriverToJson(TMC2209& driver, const char* name) {
-    JsonDocument doc;
-
+static void fillDriverJson(TMC2209& driver, const char* name, JsonDocument& doc) {
     doc["name"] = name;
     doc["communicating"] = driver.isCommunicating();
     doc["setupOk"] = driver.isSetupAndCommunicating();
@@ -1023,48 +1028,118 @@ static String dumpDriverToJson(TMC2209& driver, const char* name) {
         dynamicObj["pwmGradientAuto"] = driver.getPwmGradientAuto();
         dynamicObj["microstepCounter"] = driver.getMicrostepCounter();
     }
-
-    String output;
-    serializeJsonPretty(doc, output);
-    return output;
 }
 
-String PolarControl::dumpThetaDriverSettings() {
-    return dumpDriverToJson(m_tDriver, "theta");
+void PolarControl::writeThetaDriverSettings(Print& out) {
+    JsonDocument doc;
+    fillDriverJson(m_tDriver, "theta", doc);
+    serializeJson(doc, out);
 }
 
-String PolarControl::dumpRhoDriverSettings() {
-    return dumpDriverToJson(m_rDriver, "rho");
+void PolarControl::writeRhoDriverSettings(Print& out) {
+    JsonDocument doc;
+    fillDriverJson(m_rDriver, "rho", doc);
+    serializeJson(doc, out);
 }
 
 // Parse a coordinate line (theta, rho format)
-static bool parseLine(const String& line, float maxRho, PolarCord_t& out) {
-    if (line.length() == 0 || line.startsWith("#") || line.startsWith("//")) {
-        return false; // Skip empty/comment lines
+static bool parseLine(const char* line, float maxRho, PolarCord_t& out) {
+    const char* p = line;
+    while (*p == ' ' || *p == '\t') {
+        ++p;
+    }
+    if (*p == '\0' || *p == '#') {
+        return false;
+    }
+    if (*p == '/' && *(p + 1) == '/') {
+        return false;
     }
 
-    int sep = line.indexOf(',');
-    if (sep == -1) sep = line.indexOf(' ');
-    if (sep == -1) sep = line.indexOf('\t');
-
-    if (sep != -1) {
-        String thetaStr = line.substring(0, sep);
-        String rhoStr = line.substring(sep + 1);
-        thetaStr.trim();
-        rhoStr.trim();
-
-        out.theta = thetaStr.toFloat();
-        out.rho = rhoStr.toFloat() * maxRho;
-        return true;
+    char* end = nullptr;
+    float theta = strtof(p, &end);
+    if (end == p) {
+        return false;
     }
-    return false;
+    const char* q = end;
+    while (*q == ' ' || *q == '\t') {
+        ++q;
+    }
+    if (*q == ',') {
+        ++q;
+    }
+    while (*q == ' ' || *q == '\t') {
+        ++q;
+    }
+    if (*q == '\0') {
+        return false;
+    }
+
+    float rho = strtof(q, &end);
+    if (end == q) {
+        return false;
+    }
+
+    out.theta = theta;
+    out.rho = rho * maxRho;
+    return true;
+}
+
+static bool readLineFromBuffer(File& file, char* buffer, size_t& bufLen, size_t& bufPos, bool& eof,
+                               char* lineBuf, size_t lineCap, size_t& lineLen, bool& overflow) {
+    lineLen = 0;
+    overflow = false;
+    while (true) {
+        if (bufPos >= bufLen) {
+            if (eof) {
+                if (lineLen > 0) {
+                    lineBuf[lineLen] = '\0';
+                    return true;
+                }
+                return false;
+            }
+            int readBytes = file.read(reinterpret_cast<uint8_t*>(buffer), 4096);
+            if (readBytes <= 0) {
+                eof = true;
+                if (lineLen > 0) {
+                    lineBuf[lineLen] = '\0';
+                    return true;
+                }
+                return false;
+            }
+            bufLen = static_cast<size_t>(readBytes);
+            bufPos = 0;
+        }
+
+        char c = buffer[bufPos++];
+        if (c == '\n') {
+            lineBuf[lineLen] = '\0';
+            return true;
+        }
+        if (c == '\r') {
+            continue;
+        }
+        if (lineLen + 1 < lineCap) {
+            lineBuf[lineLen++] = c;
+        } else {
+            overflow = true;
+        }
+    }
 }
 
 void PolarControl::fileReadTask(void* arg) {
     PolarControl* pc = static_cast<PolarControl*>(arg);
     FileCommand cmd;
-    StreamingFileCache cache;
-    bool cacheActive = false;
+    File directFile;
+    float directMaxRho = 0.0f;
+    bool directActive = false;
+    char directBuffer[4096];
+    size_t directBufLen = 0;
+    size_t directBufPos = 0;
+    bool directEof = false;
+    char lineBuffer[128];
+    size_t lineLen = 0;
+    bool lineOverflow = false;
+    uint32_t yieldCounter = 0;
     
     // State for pending line handling
     PolarCord_t pendingPos;
@@ -1074,24 +1149,30 @@ void PolarControl::fileReadTask(void* arg) {
         // Check for commands (non-blocking if reading, blocking if idle)
         // If we have a pending pos, we MUST check for STOP commands but ignore LOAD
         // (though LOAD shouldn't happen while active usually)
-        if (xQueueReceive(pc->m_cmdQueue, &cmd, (cacheActive || hasPendingPos) ? 0 : portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(pc->m_cmdQueue, &cmd, (directActive || hasPendingPos) ? 0 : portMAX_DELAY) == pdTRUE) {
             LOG("FileTask: Received command %d\r\n", cmd.type);
             if (cmd.type == FileCommand::CMD_LOAD) {
                 LOG("FileTask: Opening %s with maxRho=%.2f\r\n", cmd.filename, cmd.maxRho);
-                // Open streaming cache (copies first chunk, then streams)
-                if (cache.open(cmd.filename, cmd.maxRho)) {
-                    cacheActive = true;
+                directFile = SD.open(cmd.filename, FILE_READ);
+                if (directFile) {
+                    directActive = true;
+                    directMaxRho = cmd.maxRho;
                     hasPendingPos = false; // Reset pending
-                    LOG("FileTask: Cache opened, active=true\r\n");
+                    directBufLen = 0;
+                    directBufPos = 0;
+                    directEof = false;
+                    LOG("FileTask: Direct file open, active=true\r\n");
                 } else {
-                    LOG("FileTask: Failed to open cache\r\n");
+                    LOG("FileTask: Failed to open file\r\n");
                     pc->m_fileLoading = false;
-                    cacheActive = false;
+                    directActive = false;
                 }
             } else if (cmd.type == FileCommand::CMD_STOP) {
                 LOG("FileTask: Stopping\r\n");
-                cache.close();
-                cacheActive = false;
+                if (directFile) {
+                    directFile.close();
+                }
+                directActive = false;
                 hasPendingPos = false;
                 pc->m_fileLoading = false;
                 // Clear queue
@@ -1100,22 +1181,27 @@ void PolarControl::fileReadTask(void* arg) {
             }
         }
 
-        if (cacheActive) {
-            // Maintain cache - copy next chunk if needed
-            cache.maintainCache();
-
+        if (directActive) {
             // Only read next line if we don't have one pending
             if (!hasPendingPos) {
-                String line = cache.readLine();
+                bool hasLine = readLineFromBuffer(
+                    directFile,
+                    directBuffer,
+                    directBufLen,
+                    directBufPos,
+                    directEof,
+                    lineBuffer,
+                    sizeof(lineBuffer),
+                    lineLen,
+                    lineOverflow);
 
-                if (cache.isEOF() && line.length() == 0) {
-                    // EOF
-                    cache.close();
-                    cacheActive = false;
+                if (!hasLine && directEof) {
+                    directFile.close();
+                    directActive = false;
                     pc->m_fileLoading = false;
-                    LOG("Streaming cache: EOF reached\r\n");
+                    LOG("Direct file: EOF reached\r\n");
                 } else {
-                    if (parseLine(line, cache.getMaxRho(), pendingPos)) {
+                    if (!lineOverflow && parseLine(lineBuffer, directMaxRho, pendingPos)) {
                         hasPendingPos = true;
                     }
                     // If parse failed (comment/empty), loop continues to read next line
@@ -1127,14 +1213,26 @@ void PolarControl::fileReadTask(void* arg) {
                 if (xQueueSend(pc->m_coordQueue, &pendingPos, 0) == pdTRUE) {
                     // Success
                     hasPendingPos = false;
+                    // Throttle if the queue is near full to keep Core 0 responsive.
+                    UBaseType_t spaces = uxQueueSpacesAvailable(pc->m_coordQueue);
+                    if (spaces <= 64) {
+                        vTaskDelay(2);
+                    } else {
+                        taskYIELD();
+                    }
                 } else {
                     // Queue full - yield and retry next loop
-                    vTaskDelay(1);
+                    vTaskDelay(2);
                 }
             } else {
                 // Yield to allow other tasks on Core 0 (like WebServer) to run
                 // Only yield if we didn't just push data (to keep throughput high when queue is open)
-                vTaskDelay(1); 
+                vTaskDelay(1);
+            }
+
+            // Periodic cooperative yield to avoid starving the webserver.
+            if ((++yieldCounter % 16) == 0) {
+                vTaskDelay(1);
             }
         }
     }

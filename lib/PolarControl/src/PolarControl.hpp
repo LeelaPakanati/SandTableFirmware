@@ -1,8 +1,10 @@
 #pragma once
 #include <TMC2209.h>
+#include <Print.h>
 #include "MotionPlanner.hpp"
 #include <PosGen.hpp>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <memory>
 #include <atomic>
 
@@ -94,6 +96,7 @@ public:
 
   void getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const { m_planner.getDiagnostics(queueDepth, underruns); }
   void getProfileData(uint32_t& maxProcessUs, uint32_t& maxIntervalUs, uint32_t& avgGenUs) { m_planner.getProfileData(maxProcessUs, maxIntervalUs, avgGenUs); }
+  uint32_t getFileTaskHighWater() const;
 
   // Reset theta to zero (current position becomes new origin)
   void resetTheta();
@@ -117,9 +120,9 @@ public:
   void testRhoContinuous();
   void testRhoStress();
 
-  // Driver diagnostics - returns JSON string with all driver register values
-  String dumpThetaDriverSettings();
-  String dumpRhoDriverSettings();
+  // Driver diagnostics
+  void writeThetaDriverSettings(Print& out);
+  void writeRhoDriverSettings(Print& out);
 
 private:
   struct FileCommand {

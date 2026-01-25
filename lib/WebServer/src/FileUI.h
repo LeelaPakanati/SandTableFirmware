@@ -271,7 +271,6 @@ const char FILE_UI_HTML[] PROGMEM = R"rawliteral(
                     const fileItem = document.createElement('div');
                     fileItem.className = 'file-item';
                     fileItem.innerHTML = `
-                        <img src="${thumbUrl}" class="file-thumb" onerror="this.style.opacity=0.3" loading="lazy">
                         <div class="file-info">
                             <div class="file-name">${displayName}</div>
                             <div class="file-size">${file.size > 0 ? (file.size / 1024).toFixed(1) + ' KB' : ''}</div>

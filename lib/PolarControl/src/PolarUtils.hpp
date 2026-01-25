@@ -6,10 +6,6 @@ struct PolarCord_t {
     float theta;
     float rho;
 
-    String getStr() const {
-        return "T:" + String(theta) + "|R:" + String(rho);
-    }
-
     bool isNan() const {
         return std::isnan(theta) || std::isnan(rho);
     }
@@ -60,9 +56,5 @@ public:
             (cart.x / maxRho + 1.0f) / 2.0f,
             (cart.y / maxRho + 1.0f) / 2.0f
         };
-    }
-
-    static float normalizeTheta(float theta) {
-        return std::atan2(std::sin(theta), std::cos(theta));
     }
 };
