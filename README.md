@@ -99,6 +99,7 @@ Example:
 ## UI & Visualization
 
 The web interface features a real-time position viewer. 
+![Web UI screenshot](docs/images/webserver-screenshot.png)
 - **PNG Overlays:** To provide a preview for a pattern, upload a square PNG (recommended 800x800) alongside the `.thr` file.
 - **Coordinates:** The viewer maps the table's polar coordinates to a 1:1 Cartesian space.
 
