@@ -3,6 +3,7 @@
 #include <atomic>
 #include "SCurve.hpp"
 #include "FastGPIO.hpp"
+#include "Profiler.hpp"
 
 #ifndef NATIVE_BUILD
 #include <Arduino.h>
@@ -22,11 +23,11 @@
 #endif
 
 // Configuration constants
-static constexpr int SEGMENT_BUFFER_SIZE = 8;
-static constexpr int STEP_QUEUE_SIZE = 512;
+static constexpr int SEGMENT_BUFFER_SIZE = 32;
+static constexpr int STEP_QUEUE_SIZE = 4096;
 static constexpr float MIN_SEGMENT_DURATION = 0.010f;  // 10ms minimum
 static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
-static constexpr uint32_t STEP_QUEUE_HORIZON_US = 50000;  // 50ms lookahead
+static constexpr uint32_t STEP_QUEUE_HORIZON_US = 300000;  // 300ms lookahead
 
 // Per-axis motion profile
 struct AxisProfile {
@@ -57,6 +58,7 @@ struct Segment {
 
     bool calculated;           // True if profile has been calculated
     bool executing;            // True if currently being executed
+    bool generationComplete;   // True if all steps for this segment have been generated
 
     // Execution state (phase tracking)
     int thetaPhaseIdx = 0;
@@ -141,6 +143,9 @@ public:
     // Get diagnostic info
     void getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const;
 
+    // Get profiling data
+    void getProfileData(uint32_t& maxProcessUs, uint32_t& maxIntervalUs, uint32_t& avgGenUs);
+
 private:
     // Physical parameters
     int m_stepsPerMmR;
@@ -158,7 +163,11 @@ private:
     Segment m_segments[SEGMENT_BUFFER_SIZE];
     volatile int m_segmentHead;      // Next segment to add
     volatile int m_segmentTail;      // Next segment to execute
-    int m_segmentCount;              // Number of segments in buffer
+    // m_segmentCount removed to fix race condition - calculated from Head/Tail
+    
+    // Generation tracking
+    int m_genSegmentIdx;             // Next segment to generate steps for
+    uint32_t m_genSegmentStartTime;  // Theoretical start time of the generating segment
 
     // Position tracking (in steps)
     // These are the three distinct position values mentioned in the plan:
@@ -197,7 +206,7 @@ private:
 
     // Internal methods
     void calculateSegmentProfile(Segment& seg);
-    void fillStepQueue();
+    void fillStepQueue(int segIdx, uint32_t startTime);
     int getStepQueueSpace() const;
     bool queueStepEvent(uint32_t time, uint8_t stepMask, uint8_t dirMask);
 
@@ -212,4 +221,10 @@ private:
     // ISR callback (static for C compatibility)
     static void IRAM_ATTR stepTimerISR(void* arg);
     void IRAM_ATTR handleStepTimer();
+
+    // Profiling
+    Profiler m_processProfiler;
+    Profiler m_intervalProfiler;
+    Profiler m_genProfiler;
+    uint32_t m_lastProcessTime = 0;
 };

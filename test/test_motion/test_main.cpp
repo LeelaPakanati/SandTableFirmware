@@ -12,6 +12,9 @@
 #include "esp32_mock.hpp"
 #include "thr_reader.hpp"
 #include "profile_validator.hpp"
+
+// Directly include implementations for native build to resolve linker errors
+// This mimics a unity build
 #include "SCurve.hpp"
 #include "MotionPlanner.hpp"
 
@@ -328,9 +331,9 @@ bool testSpeedMultiplier() {
 
     // Run at full speed
     planner.setSpeedMultiplier(1.0f);
+    setMicros(0);
     planner.start();
 
-    setMicros(0);
     int iterations = 0;
     int maxIterations = 50000;
     while (planner.isRunning() && iterations < maxIterations) {
@@ -357,9 +360,9 @@ bool testSpeedMultiplier() {
     planner.setEndOfPattern(true);
     planner.setSpeedMultiplier(0.5f);
     planner.recalculate();
+    setMicros(0);
     planner.start();
 
-    setMicros(0);
     iterations = 0;
     while (planner.isRunning() && iterations < maxIterations) {
         planner.process();

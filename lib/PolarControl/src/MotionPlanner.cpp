@@ -4,8 +4,10 @@
 #ifndef NATIVE_BUILD
 #include <Arduino.h>
 #include <esp_timer.h>
+#include "Logger.hpp"
 #else
 #include "esp32_mock.hpp"
+#define LOG(fmt, ...) printf(fmt, ##__VA_ARGS__)
 #endif
 
 // Step pulse width in microseconds
@@ -27,7 +29,8 @@ MotionPlanner::MotionPlanner()
     , m_speedMultiplier(1.0f)
     , m_segmentHead(0)
     , m_segmentTail(0)
-    , m_segmentCount(0)
+    , m_genSegmentIdx(0)
+    , m_genSegmentStartTime(0)
     , m_queuedTSteps(0)
     , m_queuedRSteps(0)
     , m_executedTSteps(0)
@@ -47,6 +50,7 @@ MotionPlanner::MotionPlanner()
     for (int i = 0; i < SEGMENT_BUFFER_SIZE; i++) {
         m_segments[i].calculated = false;
         m_segments[i].executing = false;
+        m_segments[i].generationComplete = false;
     }
 }
 
@@ -89,9 +93,11 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
     // Reset buffer
     m_segmentHead = 0;
     m_segmentTail = 0;
-    m_segmentCount = 0;
+    m_genSegmentIdx = 0;
+    m_genSegmentStartTime = 0;
     m_stepQueueHead = 0;
     m_stepQueueTail = 0;
+    m_completedCount = 0;
 }
 
 bool MotionPlanner::addSegment(float theta, float rho) {
@@ -107,6 +113,7 @@ bool MotionPlanner::addSegment(float theta, float rho) {
     seg.targetRho = rho;
     seg.calculated = false;
     seg.executing = false;
+    seg.generationComplete = false;
 
     // Reset execution/generation state for new segment
     seg.thetaPhaseIdx = 0;
@@ -114,7 +121,7 @@ bool MotionPlanner::addSegment(float theta, float rho) {
     seg.lastGenTime = 0.0f;
 
     // Set start positions based on previous segment or queued position
-    if (m_segmentCount > 0) {
+    if (m_segmentHead != m_segmentTail) {
         int prevIdx = (m_segmentHead - 1 + SEGMENT_BUFFER_SIZE) % SEGMENT_BUFFER_SIZE;
         seg.theta.startSteps = m_segments[prevIdx].theta.targetSteps;
         seg.rho.startSteps = m_segments[prevIdx].rho.targetSteps;
@@ -148,7 +155,6 @@ bool MotionPlanner::addSegment(float theta, float rho) {
 
     // Advance head
     m_segmentHead = (m_segmentHead + 1) % SEGMENT_BUFFER_SIZE;
-    m_segmentCount++;
 
     // Update queued positions
     m_queuedTSteps.store(seg.theta.targetSteps);
@@ -157,10 +163,18 @@ bool MotionPlanner::addSegment(float theta, float rho) {
     return true;
 }
 
+            // Reduce by 1% of vMax (scales with units)
+            // vCruise -= vMax * 0.01f;
+            // ...
+    // Note: This logic is in SCurve.cpp, I cannot edit it here easily.
+    // I will add prints to MotionPlanner.cpp
+
 void MotionPlanner::calculateSegmentProfile(Segment& seg) {
     // Apply speed multiplier to velocity limits only
     float tMaxVel = m_tMaxVel * m_speedMultiplier;
     float rMaxVel = m_rMaxVel * m_speedMultiplier;
+    
+    // printf("DEBUG: CalcSeg: mult=%.2f, rMaxVel=%.2f\n", m_speedMultiplier, rMaxVel);
 
     // Calculate S-curve for theta axis
     float thetaDist = fabsf(seg.theta.deltaUnits);
@@ -232,7 +246,7 @@ void MotionPlanner::calculateSegmentProfile(Segment& seg) {
 }
 
 void MotionPlanner::recalculate() {
-    if (m_segmentCount == 0) return;
+    if (m_segmentHead == m_segmentTail) return;
 
     // Apply speed multiplier to velocity limits
     float tMaxVel = m_tMaxVel * m_speedMultiplier;
@@ -248,7 +262,7 @@ void MotionPlanner::recalculate() {
     int8_t prevThetaDir = 0;
     int8_t prevRhoDir = 0;
 
-    if (m_running && m_segmentCount > 0) {
+    if (m_running && m_segmentHead != m_segmentTail) {
         Segment& current = m_segments[m_segmentTail];
         if (current.executing && current.calculated) {
             prevThetaVel = current.thetaExitVel;
@@ -259,7 +273,7 @@ void MotionPlanner::recalculate() {
     }
 
     int idx = m_segmentTail;
-    for (int i = 0; i < m_segmentCount; i++) {
+    while (idx != m_segmentHead) {
         Segment& seg = m_segments[idx];
 
         if (!seg.executing) {
@@ -300,18 +314,19 @@ void MotionPlanner::recalculate() {
 
     // Work backwards, propagating constraints
     idx = lastIdx;
-    for (int i = m_segmentCount - 1; i >= 0; i--) {
+    while (true) {
         Segment& seg = m_segments[idx];
 
         if (seg.executing) {
             // Don't modify executing segment
+            if (idx == m_segmentTail) break; // Reached start
             idx = (idx - 1 + SEGMENT_BUFFER_SIZE) % SEGMENT_BUFFER_SIZE;
             continue;
         }
 
         // Get next segment's entry requirements (which become our exit constraints)
         int nextIdx = (idx + 1) % SEGMENT_BUFFER_SIZE;
-        if (i < m_segmentCount - 1) {
+        if (nextIdx != m_segmentHead) {
             Segment& nextSeg = m_segments[nextIdx];
 
             // Check for direction reversals - if next segment reverses, we must exit at 0
@@ -356,7 +371,7 @@ void MotionPlanner::recalculate() {
         }
 
         // Propagate entry velocity constraint to previous segment's exit
-        if (i > 0) {
+        if (idx != m_segmentTail) {
             int prevIdx = (idx - 1 + SEGMENT_BUFFER_SIZE) % SEGMENT_BUFFER_SIZE;
             Segment& prevSeg = m_segments[prevIdx];
             if (!prevSeg.executing) {
@@ -364,7 +379,8 @@ void MotionPlanner::recalculate() {
                 prevSeg.rhoExitVel = std::min(prevSeg.rhoExitVel, seg.rhoEntryVel);
             }
         }
-
+        
+        if (idx == m_segmentTail) break; // Finished all
         idx = (idx - 1 + SEGMENT_BUFFER_SIZE) % SEGMENT_BUFFER_SIZE;
     }
 
@@ -374,7 +390,7 @@ void MotionPlanner::recalculate() {
 
     // Pass 3: Calculate actual profiles
     idx = m_segmentTail;
-    for (int i = 0; i < m_segmentCount; i++) {
+    while (idx != m_segmentHead) {
         Segment& seg = m_segments[idx];
         // Only calculate if not already executing AND no steps generated yet
         if (!seg.executing && seg.lastGenTime < 0.0001f) {
@@ -402,9 +418,13 @@ void MotionPlanner::start() {
     m_running = true;
     m_segmentStartTime = micros();
     m_segmentElapsed = 0.0f;
+    
+    // Initialize generation state
+    m_genSegmentIdx = m_segmentTail;
+    m_genSegmentStartTime = m_segmentStartTime;
 
     // Mark first segment as executing
-    if (m_segmentCount > 0) {
+    if (m_segmentHead != m_segmentTail) {
         m_segments[m_segmentTail].executing = true;
     }
 }
@@ -424,7 +444,8 @@ void MotionPlanner::stop() {
     // Clear segment buffer
     m_segmentHead = 0;
     m_segmentTail = 0;
-    m_segmentCount = 0;
+    m_genSegmentIdx = 0;
+    m_genSegmentStartTime = 0;
 
     // Reset pattern state
     m_endOfPattern = false;
@@ -440,46 +461,83 @@ void MotionPlanner::stop() {
 }
 
 void MotionPlanner::process() {
+    uint32_t now = micros();
+    if (m_lastProcessTime > 0) {
+        m_intervalProfiler.addSample(now - m_lastProcessTime);
+    }
+    m_lastProcessTime = now;
+
     if (!m_running) return;
 
-    // Fill the step queue with upcoming step events
-    fillStepQueue();
+    // 1. Generation Loop
+    // Continue generating steps for segments as long as we have space
+    // and are within the lookahead horizon
+    while (m_genSegmentIdx != m_segmentHead) {
+        Segment& genSeg = m_segments[m_genSegmentIdx];
+        
+        // Ensure profile is calculated before generating
+        if (!genSeg.calculated) {
+            // Should have been calculated by recalculate(), but just in case
+            calculateSegmentProfile(genSeg);
+        }
+
+        // Generate steps for this segment
+        fillStepQueue(m_genSegmentIdx, m_genSegmentStartTime);
+
+        // If this segment is fully generated, move to the next one
+        if (genSeg.generationComplete) {
+            m_genSegmentStartTime += (uint32_t)(genSeg.duration * 1000000.0f);
+            m_genSegmentIdx = (m_genSegmentIdx + 1) % SEGMENT_BUFFER_SIZE;
+        } else {
+            // Not done generating (queue full or horizon reached)
+            break;
+        }
+    }
 
     // If we have segments but none are executing, start the first one
-    if (m_segmentCount > 0 && !m_segments[m_segmentTail].executing) {
-        m_segmentStartTime = micros();
+    if (m_segmentHead != m_segmentTail && !m_segments[m_segmentTail].executing) {
+        // First segment start - use current time
+        // Note: m_segmentStartTime was already set in start(), but if we added 
+        // segments after start() while idle, we need to update it.
+        // If we are recovering from idle, sync gen time too.
+        if (m_segmentTail == m_genSegmentIdx) { // Only if we haven't generated ahead
+             m_segmentStartTime = micros();
+             m_genSegmentStartTime = m_segmentStartTime;
+        }
+        
         m_segmentElapsed = 0.0f;
         m_segments[m_segmentTail].executing = true;
     }
 
-    // Auto-start timer if buffer is sufficiently full
+    // Auto-start timer if buffer has any data
     if (!m_timerActive) {
         int queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
-        if (queueDepth > 64) {
+        if (queueDepth > 0) {
             esp_timer_start_periodic((esp_timer_handle_t)m_timerHandle, STEP_TIMER_PERIOD_US);
             m_timerActive = true;
         }
     }
 
-    // Check for segment completion
-    if (m_segmentCount > 0) {
+    // 2. Execution Completion Check
+    if (m_segmentHead != m_segmentTail) {
         Segment& current = m_segments[m_segmentTail];
 
         // Calculate elapsed time in current segment
         uint32_t now = micros();
-        float elapsed = (now - m_segmentStartTime) / 1000000.0f;
+        // Handle timer wraparound for elapsed calculation
+        uint32_t diff = now - m_segmentStartTime;
+        float elapsed = diff / 1000000.0f;
 
         // Check if current segment is complete
         // It's complete if time has elapsed AND we've generated all steps for it
-        if (current.executing && elapsed >= current.duration &&
-            current.lastGenTime >= current.duration - 0.000001f) {
+        if (current.executing && elapsed >= current.duration && current.generationComplete) {
 
-            if (m_segmentCount < 5 && m_endOfPattern) {
+            // Calculate segment count for debug
+            int count = (m_segmentHead - m_segmentTail + SEGMENT_BUFFER_SIZE) % SEGMENT_BUFFER_SIZE;
+
+            if (count < 5 && m_endOfPattern) {
                 float curT, curR;
                 getCurrentPosition(curT, curR);
-                printf("[DEBUG] Segment %u complete. count=%d, target=(%.3f, %.3f), actual=(%.3f, %.3f), duration=%.3f, elapsed=%.3f\n",
-                       m_completedCount, m_segmentCount, current.targetTheta, current.targetRho,
-                       curT, curR, current.duration, elapsed);
             }
 
             // Segment complete
@@ -488,39 +546,63 @@ void MotionPlanner::process() {
 
             // Move to next segment
             m_segmentTail = (m_segmentTail + 1) % SEGMENT_BUFFER_SIZE;
-            m_segmentCount--;
+            
+            // Update start time deterministically
+            m_segmentStartTime += (uint32_t)(current.duration * 1000000.0f);
+            m_segmentElapsed = 0.0f;
 
-            // Start next segment
-            if (m_segmentCount > 0) {
-                m_segmentStartTime = now;
-                m_segmentElapsed = 0.0f;
+            // Start next segment immediately if available
+            if (m_segmentHead != m_segmentTail) {
                 m_segments[m_segmentTail].executing = true;
+                
+                // If we fell behind in generation (underrun recovery), 
+                // snap generation to execution
+                if (m_genSegmentIdx == m_segmentTail && !m_segments[m_segmentTail].generationComplete) {
+                     // We are generating the segment we just started executing.
+                     // Ensure the timestamps are aligned.
+                     m_genSegmentStartTime = m_segmentStartTime;
+                }
             }
         }
     }
 
     // If no more segments, we're idle
-    if (m_segmentCount == 0 && m_endOfPattern) {
+    if (m_segmentHead == m_segmentTail && m_endOfPattern) {
         stop();
     }
+    
+    m_processProfiler.addSample(micros() - now);
 }
 
-void MotionPlanner::fillStepQueue() {
-    if (m_segmentCount == 0) return;
-
-    Segment& seg = m_segments[m_segmentTail];
-    if (!seg.calculated || !seg.executing) return;
-
-    uint32_t now = micros();
+void MotionPlanner::fillStepQueue(int segIdx, uint32_t startTime) {
+    Segment& seg = m_segments[segIdx];
+    // No need to check executing/calculated here as process() handles it
+    
+    uint32_t startUs = micros();
+    uint32_t now = startUs;
 
     float segDuration = seg.duration;
 
-    // Calculate current wall-clock position in segment time
-    float wallTime = (now - m_segmentStartTime) / 1000000.0f;
+    // Calculate current wall-clock position relative to THIS segment's start time
+    // If startTime is in the future, wallTime will be negative, which is correct
+    int32_t timeDiff = (int32_t)(now - startTime);
+    float wallTime = timeDiff / 1000000.0f;
 
     // Start generating from where we last generated
     float t = seg.lastGenTime;
-    float tEnd = std::min(segDuration, wallTime + (STEP_QUEUE_HORIZON_US / 1000000.0f));
+    
+    // Determine end time for this batch
+    // We want to generate up to HORIZON ahead of current real time
+    float tLimit = wallTime + (STEP_QUEUE_HORIZON_US / 1000000.0f);
+    float tEnd = std::min(segDuration, tLimit);
+
+    // If we are already ahead of the horizon, don't generate anything
+    if (t >= tEnd) {
+        if (t >= segDuration - 0.000001f) {
+            seg.generationComplete = true;
+        }
+        return;
+    }
 
     static constexpr float SAMPLE_INTERVAL = STEP_TIMER_PERIOD_US / 1000000.0f;
 
@@ -570,7 +652,8 @@ void MotionPlanner::fillStepQueue() {
         }
 
         // Generate step events for any steps needed
-        uint32_t eventTime = m_segmentStartTime + (uint32_t)(t * 1000000.0f);
+        // Use startTime (the segment's absolute start) + t
+        uint32_t eventTime = startTime + (uint32_t)(t * 1000000.0f);
 
         while (lastThetaSteps != targetThetaSteps || lastRhoSteps != targetRhoSteps) {
             uint8_t stepMask = 0;
@@ -616,13 +699,21 @@ void MotionPlanner::fillStepQueue() {
             }
         }
 
+        if (t >= segDuration - 0.000001f) break;
         t += SAMPLE_INTERVAL;
+        if (t > segDuration) t = segDuration;
     }
 
     // Finished this batch - save state
     seg.lastGenTime = t;
     seg.lastGenThetaSteps = lastThetaSteps;
     seg.lastGenRhoSteps = lastRhoSteps;
+
+    if (t >= segDuration - 0.000001f) {
+        seg.generationComplete = true;
+    }
+
+    m_genProfiler.addSample(micros() - startUs);
 }
 
 int MotionPlanner::getStepQueueSpace() const {
@@ -651,7 +742,7 @@ bool MotionPlanner::queueStepEvent(uint32_t time, uint8_t stepMask, uint8_t dirM
 }
 
 bool MotionPlanner::hasSpace() const {
-    return m_segmentCount < SEGMENT_BUFFER_SIZE - 1;
+    return ((m_segmentHead + 1) % SEGMENT_BUFFER_SIZE) != m_segmentTail;
 }
 
 bool MotionPlanner::isRunning() const {
@@ -660,7 +751,7 @@ bool MotionPlanner::isRunning() const {
 
 bool MotionPlanner::isIdle() const {
     bool queueEmpty = (m_stepQueueHead == m_stepQueueTail);
-    return !m_running && m_segmentCount == 0 && queueEmpty;
+    return !m_running && (m_segmentHead == m_segmentTail) && queueEmpty;
 }
 
 void MotionPlanner::getCurrentPosition(float& theta, float& rho) const {
@@ -693,18 +784,24 @@ void MotionPlanner::setMotionLimits(float rMaxVel, float rMaxAccel, float rMaxJe
 
     // Mark all non-executing segments as needing recalculation
     int idx = m_segmentTail;
-    for (int i = 0; i < m_segmentCount; i++) {
+    while (idx != m_segmentHead) {
         Segment& seg = m_segments[idx];
-        if (!seg.executing) {
+        // Only allow modifying segments that haven't started generating steps
+        if (!seg.executing && seg.lastGenTime < 0.0001f) {
             seg.calculated = false;
+            seg.generationComplete = false;
         }
         idx = (idx + 1) % SEGMENT_BUFFER_SIZE;
     }
 
     // Recalculate all pending segments with new limits
-    if (m_segmentCount > 0) {
+    if (m_segmentHead != m_segmentTail) {
         recalculate();
     }
+    
+    // Reset generation index to tail (it will fast-forward in process() if needed)
+    m_genSegmentIdx = m_segmentTail;
+    m_genSegmentStartTime = m_segmentStartTime;
 }
 
 void MotionPlanner::setSpeedMultiplier(float mult) {
@@ -719,16 +816,22 @@ void MotionPlanner::setSpeedMultiplier(float mult) {
 
     // Mark all non-executing segments as needing recalculation
     int idx = m_segmentTail;
-    for (int i = 0; i < m_segmentCount; i++) {
+    while (idx != m_segmentHead) {
         Segment& seg = m_segments[idx];
-        if (!seg.executing) {
+        // Only allow modifying segments that haven't started generating steps
+        if (!seg.executing && seg.lastGenTime < 0.0001f) {
             seg.calculated = false;
+            seg.generationComplete = false;
         }
         idx = (idx + 1) % SEGMENT_BUFFER_SIZE;
     }
 
     // Recalculate all pending segments with new speed
     recalculate();
+
+    // Reset generation index to tail
+    m_genSegmentIdx = m_segmentTail;
+    m_genSegmentStartTime = m_segmentStartTime;
 }
 
 void MotionPlanner::setEndOfPattern(bool ending) {
@@ -738,6 +841,17 @@ void MotionPlanner::setEndOfPattern(bool ending) {
 void MotionPlanner::getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const {
     queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
     underruns = m_underrunCount.load();
+}
+
+void MotionPlanner::getProfileData(uint32_t& maxProcessUs, uint32_t& maxIntervalUs, uint32_t& avgGenUs) {
+    maxProcessUs = m_processProfiler.getMax();
+    maxIntervalUs = m_intervalProfiler.getMax();
+    avgGenUs = m_genProfiler.getAvg();
+    
+    // Reset max values after reading to capture transient spikes
+    m_processProfiler.reset();
+    m_intervalProfiler.reset();
+    m_genProfiler.reset();
 }
 
 int32_t MotionPlanner::thetaToSteps(float theta) const {
