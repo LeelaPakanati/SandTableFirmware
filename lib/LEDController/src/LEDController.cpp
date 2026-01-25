@@ -1,4 +1,5 @@
 #include "LEDController.hpp"
+#include "Logger.hpp"
 
 LEDController::LEDController(uint8_t pin) : m_pin(pin), m_brightness(128) {
 }
@@ -11,10 +12,7 @@ void LEDController::begin() {
     // Set initial brightness
     ledcWrite(PWM_CHANNEL, m_brightness);
 
-    Serial.print("LED Controller initialized on GPIO ");
-    Serial.print(m_pin);
-    Serial.print(" with brightness ");
-    Serial.println(m_brightness);
+    LOG("LED Controller initialized on GPIO %d with brightness %d\r\n", m_pin, m_brightness);
 }
 
 void LEDController::setBrightness(uint8_t brightness) {

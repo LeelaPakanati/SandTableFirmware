@@ -3,6 +3,7 @@
 #include <FS.h>
 #include <SD.h>
 #include <SPI.h>
+#include "Logger.hpp"
 
 // SD Card SPI pins
 #define SD_CS_PIN   5
@@ -16,33 +17,33 @@ inline bool initSDCard() {
     SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
 
     // Initialize SD with CS pin, SPI instance, and high frequency (20MHz)
-    if (!SD.begin(SD_CS_PIN, SPI, 20000000)) {
-        Serial.println("ERROR: SD card mount failed!");
+    if (!SD.begin(SD_CS_PIN, SPI, 40000000)) {
+        LOG("ERROR: SD card mount failed!\r\n");
         return false;
     }
 
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
-        Serial.println("No SD card attached");
+        LOG("No SD card attached\r\n");
         return false;
     }
 
-    Serial.print("SD Card Type: ");
-    if (cardType == CARD_MMC) Serial.println("MMC");
-    else if (cardType == CARD_SD) Serial.println("SDSC");
-    else if (cardType == CARD_SDHC) Serial.println("SDHC");
-    else Serial.println("UNKNOWN");
+    const char* typeStr = "UNKNOWN";
+    if (cardType == CARD_MMC) typeStr = "MMC";
+    else if (cardType == CARD_SD) typeStr = "SDSC";
+    else if (cardType == CARD_SDHC) typeStr = "SDHC";
+    LOG("SD Card Type: %s\r\n", typeStr);
 
     uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-    Serial.printf("SD Card Size: %llu MB\r\n", cardSize);
+    LOG("SD Card Size: %llu MB\r\n", cardSize);
 
     // Ensure directory structure exists
     if (!SD.exists("/patterns")) {
-        Serial.println("Creating /patterns directory");
+        LOG("Creating /patterns directory\r\n");
         SD.mkdir("/patterns");
     }
     if (!SD.exists("/playlists")) {
-        Serial.println("Creating /playlists directory");
+        LOG("Creating /playlists directory\r\n");
         SD.mkdir("/playlists");
     }
 
@@ -51,16 +52,16 @@ inline bool initSDCard() {
 
 // Helper to list files on SD card
 inline void listSDFiles(const char* dirname = "/") {
-    Serial.printf("\r\n=== Files on SD Card (%s) ===\r\n", dirname);
+    LOG("\r\n=== Files on SD Card (%s) ===\r\n", dirname);
 
     File root = SD.open(dirname);
     if (!root) {
-        Serial.println("ERROR: Failed to open directory");
+        LOG("ERROR: Failed to open directory\r\n");
         return;
     }
 
     if (!root.isDirectory()) {
-        Serial.println("ERROR: Not a directory");
+        LOG("ERROR: Not a directory\r\n");
         return;
     }
 
@@ -68,14 +69,14 @@ inline void listSDFiles(const char* dirname = "/") {
     int count = 0;
     while (file) {
         if (!file.isDirectory()) {
-            Serial.printf("  %s (%lu bytes)\r\n", file.name(), (unsigned long)file.size());
+            LOG("  %s (%lu bytes)\r\n", file.name(), (unsigned long)file.size());
             count++;
         }
         file.close();
         file = root.openNextFile();
     }
     
-    Serial.printf("Total files: %d\r\n\r\n", count);
+    LOG("Total files: %d\r\n\r\n", count);
 }
 
 // Recursively delete a directory and all its contents

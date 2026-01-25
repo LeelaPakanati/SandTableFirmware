@@ -1,8 +1,10 @@
 #pragma once
 #include <Arduino.h>
 #include <SDCard.hpp>
+#include <FS.h>
 #include <cmath>
 #include "PolarUtils.hpp"
+#include "Logger.hpp"
 
 class PosGen {
   public:
@@ -21,23 +23,19 @@ class FilePosGen : public PosGen {
       }
     }
 
-    FilePosGen(String filePath, float maxRho = 450.0) :
+    FilePosGen(fs::FS &fs, String filePath, float maxRho = 450.0) :
+      m_fs(fs),
       m_currFile(filePath),
       m_maxRho(maxRho),
       m_bufHead(0),
       m_bufTail(0)
     {
-      m_file = SD.open(filePath.c_str(), FILE_READ);
+      m_file = m_fs.open(filePath.c_str(), FILE_READ);
       if (!m_file) {
-        Serial.print("ERROR: Could not open file: ");
-        Serial.println(filePath);
+        LOG("ERROR: Could not open file: %s\r\n", filePath.c_str());
       } else {
         m_fileSize = m_file.size();
-        Serial.print("Opened file: ");
-        Serial.print(filePath);
-        Serial.print(" (Size: ");
-        Serial.print(m_fileSize);
-        Serial.println(" bytes)");
+        LOG("Opened file: %s (Size: %u bytes)\r\n", filePath.c_str(), m_fileSize);
         fillBuffer(); // Initial fill
       }
     }
@@ -88,10 +86,7 @@ class FilePosGen : public PosGen {
 
         return {theta, rho};
       } else {
-        Serial.print("ERROR: Invalid line format at line ");
-        Serial.print(m_currLine);
-        Serial.print(": ");
-        Serial.println(line);
+        LOG("ERROR: Invalid line format at line %d: %s\r\n", m_currLine, line.c_str());
         return getNextPos();
       }
     }
@@ -102,6 +97,7 @@ class FilePosGen : public PosGen {
     }
 
   private:
+    fs::FS &m_fs;
     int m_currLine = 0;
     String m_currFile = "";
     float m_maxRho;
@@ -141,6 +137,7 @@ class FilePosGen : public PosGen {
 
     String readBufferedLine() {
         String line = "";
+        line.reserve(64);
         
         while (true) {
             // Refill if empty
@@ -151,21 +148,29 @@ class FilePosGen : public PosGen {
 
             // Scan for newline
             bool foundNewline = false;
-            for (int i = m_bufHead; i < m_bufTail; i++) {
+            int i = m_bufHead;
+            for (; i < m_bufTail; i++) {
                 char c = (char)m_buffer[i];
                 if (c == '\n') {
-                    line += String((char*)m_buffer + m_bufHead, i - m_bufHead);
-                    m_bufHead = i + 1;
                     foundNewline = true;
                     break;
                 }
             }
 
-            if (foundNewline) break;
+            // Append bytes to line safe and clean
+            for (int k = m_bufHead; k < i; k++) {
+                line += (char)m_buffer[k];
+            }
 
-            // No newline in current buffer, append all and refill
-            line += String((char*)m_buffer + m_bufHead, m_bufTail - m_bufHead);
-            m_bufHead = m_bufTail;
+            m_bufHead = i;
+
+            if (foundNewline) {
+                m_bufHead++; // Skip the newline
+                break;
+            }
+
+            // No newline in current buffer, we consumed it all
+            // Loop will continue and refill buffer
             
             // Check max line length to prevent memory issues with weird files
             if (line.length() > 256) break; 

@@ -1,4 +1,5 @@
 #include "ClearingPatternGen.hpp"
+#include "Logger.hpp"
 
 ClearingPatternGen::ClearingPatternGen(ClearingPattern pattern, float maxRho)
     : m_pattern(pattern),
@@ -10,10 +11,7 @@ ClearingPatternGen::ClearingPatternGen(ClearingPattern pattern, float maxRho)
       m_inward(false),
       m_complete(false) {
 
-    Serial.print("ClearingPatternGen created: pattern=");
-    Serial.print(pattern);
-    Serial.print(", maxRho=");
-    Serial.println(maxRho);
+    LOG("ClearingPatternGen created: pattern=%d, maxRho=%.2f\r\n", pattern, maxRho);
 }
 
 PolarCord_t ClearingPatternGen::getNextPos() {
@@ -53,7 +51,7 @@ PolarCord_t ClearingPatternGen::generateSpiralOutward() {
 
     if (m_currentTheta > TOTAL_THETA) {
         m_complete = true;
-        Serial.println("Spiral outward complete");
+        LOG("Spiral outward complete\r\n");
         return {std::nan(""), std::nan("")};
     }
 
@@ -74,7 +72,7 @@ PolarCord_t ClearingPatternGen::generateSpiralInward() {
 
     if (m_currentTheta > TOTAL_THETA) {
         m_complete = true;
-        Serial.println("Spiral inward complete");
+        LOG("Spiral inward complete\r\n");
         return {std::nan(""), std::nan("")};
     }
 
@@ -95,7 +93,7 @@ PolarCord_t ClearingPatternGen::generateConcentricCircles() {
 
     if (m_circleIndex >= NUM_CIRCLES) {
         m_complete = true;
-        Serial.println("Concentric circles complete");
+        LOG("Concentric circles complete\r\n");
         return {std::nan(""), std::nan("")};
     }
 
@@ -132,7 +130,7 @@ PolarCord_t ClearingPatternGen::generateZigzagRadial() {
 
     if (m_spokeIndex >= NUM_SPOKES) {
         m_complete = true;
-        Serial.println("Zigzag radial complete");
+        LOG("Zigzag radial complete\r\n");
         return {std::nan(""), std::nan("")};
     }
 
@@ -177,7 +175,7 @@ PolarCord_t ClearingPatternGen::generatePetalFlower() {
 
     if (m_circleIndex >= NUM_PASSES) {
         m_complete = true;
-        Serial.println("Petal flower complete");
+        LOG("Petal flower complete\r\n");
         return {std::nan(""), std::nan("")};
     }
 
