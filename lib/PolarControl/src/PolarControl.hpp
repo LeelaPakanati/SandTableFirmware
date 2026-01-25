@@ -4,6 +4,7 @@
 #include <PosGen.hpp>
 #include <freertos/semphr.h>
 #include <memory>
+#include <atomic>
 
 // Pin definitions
 #define R_STEP_PIN 33
@@ -57,7 +58,8 @@ public:
     RUNNING,
     PAUSED,
     STOPPING,
-    CLEARING
+    CLEARING,
+    PREPARING
   };
 
   PolarControl();
@@ -91,6 +93,7 @@ public:
   int getProgressPercent() const;
 
   void getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const { m_planner.getDiagnostics(queueDepth, underruns); }
+  void getProfileData(uint32_t& maxProcessUs, uint32_t& maxIntervalUs, uint32_t& avgGenUs) { m_planner.getProfileData(maxProcessUs, maxIntervalUs, avgGenUs); }
 
   // Reset theta to zero (current position becomes new origin)
   void resetTheta();
@@ -126,6 +129,7 @@ private:
   };
 
   static void fileReadTask(void* arg);
+  static void homingTask(void* arg);
 
   // Physical constants
   static constexpr float R_MAX = 450.0f;
@@ -156,7 +160,7 @@ private:
   TaskHandle_t m_fileTaskHandle = NULL;
   volatile bool m_fileLoading = false;
 
-  State_t m_state = UNINITIALIZED;
+  std::atomic<State_t> m_state{UNINITIALIZED};
   std::unique_ptr<PosGen> m_posGen;
 
   // Speed setting: 1-10

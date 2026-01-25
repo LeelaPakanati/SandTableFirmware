@@ -86,6 +86,7 @@ public:
             case 4: return "PAUSED";
             case 5: return "STOPPING";
             case 6: return "CLEARING";
+            case 7: return "PREPARING";
             default: return "UNKNOWN";
         }
     }

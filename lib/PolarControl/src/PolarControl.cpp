@@ -1,9 +1,11 @@
 #include "PolarControl.hpp"
 #include "PolarUtils.hpp"
 #include "MakeUnique.hpp"
+#include "StreamingFileCache.hpp"
 #include "Logger.hpp"
 #include <cmath>
 #include <SD.h>
+#include <LittleFS.h>
 #include <ArduinoJson.h>
 
 // ============================================================================
@@ -43,6 +45,13 @@ void PolarControl::begin() {
 
     delay(100);  // Allow drivers to initialize
 
+    // Initialize LittleFS
+    if (!LittleFS.begin(true)) {
+        LOG("ERROR: LittleFS Mount Failed\r\n");
+    } else {
+        LOG("LittleFS Mounted\r\n");
+    }
+
     // Create queues for async file reading
     m_coordQueue = xQueueCreate(256, sizeof(PolarCord_t));
     m_cmdQueue = xQueueCreate(5, sizeof(FileCommand));
@@ -51,7 +60,7 @@ void PolarControl::begin() {
     xTaskCreatePinnedToCore(
         fileReadTask,
         "FileReadTask",
-        8192,
+        16384,
         this,
         1,
         &m_fileTaskHandle,
@@ -104,13 +113,33 @@ void PolarControl::setupDrivers() {
 }
 
 void PolarControl::home() {
-    xSemaphoreTake(m_mutex, portMAX_DELAY);
-    homeDriver(m_rDriver);
+    // Only allow homing if system is relatively idle/safe to do so
+    if (m_state != IDLE && m_state != INITIALIZED) {
+        LOG("Cannot home: system not IDLE/INITIALIZED\r\n");
+        return;
+    }
+    
+    // Create async task for homing
+    xTaskCreate(homingTask, "HomingTask", 4096, this, 1, NULL);
+    LOG("Homing task started\r\n");
+}
+
+void PolarControl::homingTask(void* arg) {
+    PolarControl* self = static_cast<PolarControl*>(arg);
+    
+    // Take mutex to protect driver access
+    xSemaphoreTake(self->m_mutex, portMAX_DELAY);
+    
+    // Perform homing
+    self->homeDriver(self->m_rDriver);
     LOG("R Homing Done\r\n");
 
-    // Planner position will be at 0,0 after init
-    m_state = IDLE;
-    xSemaphoreGive(m_mutex);
+    // Reset state
+    self->m_state = IDLE;
+    xSemaphoreGive(self->m_mutex);
+    
+    // Self-delete
+    vTaskDelete(NULL);
 }
 
 void PolarControl::applyDriverSettings(TMC2209 &driver, const DriverSettings &settings) {
@@ -274,31 +303,41 @@ bool PolarControl::loadAndRunFile(String filePath, float maxRho) {
         return false;
     }
 
-    LOG("Loading pattern file: %s\r\n", filePath.c_str());
+    LOG("Loading pattern file (Async): %s\r\n", filePath.c_str());
 
-    auto newGen = std_patch::make_unique<FilePosGen>(filePath, maxRho);
+    // Clear any existing generator
+    m_posGen.reset();
 
-    // Quick check if file is valid/openable
-    PolarCord_t firstPos = newGen->getNextPos();
-    if (firstPos.isNan()) {
-        LOG("ERROR: File is empty or invalid\r\n");
-        m_posGen.reset();
+    // Send load command to file task
+    FileCommand cmd;
+    cmd.type = FileCommand::CMD_LOAD;
+    strncpy(cmd.filename, filePath.c_str(), sizeof(cmd.filename) - 1);
+    cmd.filename[sizeof(cmd.filename) - 1] = '\0';
+    cmd.maxRho = maxRho;
+
+    // Set flag explicitly BEFORE command to prevent race condition with feedPlanner
+    m_fileLoading = true;
+
+    // Reset planner stats
+    m_planner.resetCompletedCount();
+
+    // Send command
+    if (xQueueSend(m_cmdQueue, &cmd, 100) != pdTRUE) {
+        LOG("ERROR: Failed to send load command\r\n");
+        m_fileLoading = false; // Reset if send fails
         xSemaphoreGive(m_mutex);
         return false;
     }
+    LOG("Load command queued\r\n");
 
-    m_posGen = std::move(newGen);
-
-    // Reset planner stats for new pattern
-    m_planner.resetCompletedCount();
-
-    // Feed initial segments to planner
+    // Wait briefly for file task to start filling queue
+    vTaskDelay(10);
     feedPlanner();
 
     // Start the motion planner
     m_planner.start();
 
-    m_state = RUNNING;
+    m_state = PREPARING;
     xSemaphoreGive(m_mutex);
     return true;
 }
@@ -332,8 +371,13 @@ bool PolarControl::resume() {
 bool PolarControl::stop() {
     xSemaphoreTake(m_mutex, portMAX_DELAY);
 
-    if (m_state == PAUSED || m_state == RUNNING || m_state == CLEARING) {
+    if (m_state == PAUSED || m_state == RUNNING || m_state == CLEARING || m_state == PREPARING) {
         m_posGen.reset();
+
+        // Send stop command to file task
+        FileCommand cmd;
+        cmd.type = FileCommand::CMD_STOP;
+        xQueueSend(m_cmdQueue, &cmd, 0);
 
         m_planner.stop();
 
@@ -348,8 +392,10 @@ bool PolarControl::stop() {
 }
 
 void PolarControl::setSpeed(uint8_t speed) {
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
     m_speed = speed;
     updateSpeedSettings();
+    xSemaphoreGive(m_mutex);
 }
 
 void PolarControl::resetTheta() {
@@ -374,8 +420,15 @@ PolarCord_t PolarControl::getActualPosition() {
 }
 
 int PolarControl::getProgressPercent() const {
-    if (!m_posGen) return -1;
-    return m_posGen->getProgressPercent();
+    // Cast away constness to use mutex (it's safe as we don't modify logical state)
+    // Alternatively, make m_mutex mutable, but C++ style cast is easier here for existing code
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
+    int progress = -1;
+    if (m_posGen) {
+        progress = m_posGen->getProgressPercent();
+    }
+    xSemaphoreGive(m_mutex);
+    return progress;
 }
 
 void PolarControl::forceStop() {
@@ -412,13 +465,22 @@ void PolarControl::feedPlanner() {
     while (m_planner.hasSpace()) {
         PolarCord_t next;
         if (xQueueReceive(m_coordQueue, &next, 0) == pdTRUE) {
+            if (m_state == PREPARING) {
+                m_state = RUNNING;
+                LOG("feedPlanner: First coord received, state -> RUNNING\r\n");
+            }
             m_planner.setEndOfPattern(false);
             m_planner.addSegment(next.theta, next.rho);
             addedAny = true;
         } else {
             // Queue empty
+            // Check if file task is still loading
+            // We use a safe peek or just assume if queue is empty and we aren't told it's done...
+            // But we don't have a reliable "done" flag from the task easily visible here without shared state.
+            // m_fileLoading is volatile bool, set by task.
             if (!m_fileLoading) {
                 // File done and queue empty -> End of Pattern
+                LOG("feedPlanner: Queue empty and fileLoading=false -> End of Pattern\r\n");
                 m_planner.setEndOfPattern(true);
             }
             break;
@@ -434,12 +496,12 @@ void PolarControl::feedPlanner() {
 // ============================================================================
 
 bool PolarControl::processNextMove() {
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
+
     // Let planner process (handles timer internally)
     m_planner.process();
 
-    xSemaphoreTake(m_mutex, portMAX_DELAY);
-
-    if (m_state == RUNNING || m_state == CLEARING) {
+    if (m_state == RUNNING || m_state == CLEARING || m_state == PREPARING) {
         // Feed more segments to the planner
         feedPlanner();
 
@@ -447,7 +509,7 @@ bool PolarControl::processNextMove() {
         if (m_planner.isIdle()) {
             m_posGen.reset();
             m_state = IDLE;
-            LOG("Pattern Complete\r\n");
+            LOG("Pattern Complete (idle state detected in processNextMove)\r\n");
             xSemaphoreGive(m_mutex);
             return false;
         }
@@ -465,6 +527,7 @@ bool PolarControl::processNextMove() {
 // ============================================================================
 
 void PolarControl::setMotionSettings(const MotionSettings& settings) {
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
     m_motionSettings = settings;
 
     // Update the motion planner with new limits (doesn't reset positions)
@@ -478,9 +541,11 @@ void PolarControl::setMotionSettings(const MotionSettings& settings) {
     );
 
     LOG("Motion settings updated\r\n");
+    xSemaphoreGive(m_mutex);
 }
 
 void PolarControl::setThetaDriverSettings(const DriverSettings& settings) {
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
     m_tDriverSettings = settings;
     applyDriverSettings(m_tDriver, m_tDriverSettings);
 
@@ -498,9 +563,11 @@ void PolarControl::setThetaDriverSettings(const DriverSettings& settings) {
     );
 
     LOG("Theta driver settings updated\r\n");
+    xSemaphoreGive(m_mutex);
 }
 
 void PolarControl::setRhoDriverSettings(const DriverSettings& settings) {
+    xSemaphoreTake(m_mutex, portMAX_DELAY);
     m_rDriverSettings = settings;
     applyDriverSettings(m_rDriver, m_rDriverSettings);
     applyDriverSettings(m_rCDriver, m_rDriverSettings);
@@ -519,6 +586,7 @@ void PolarControl::setRhoDriverSettings(const DriverSettings& settings) {
     );
 
     LOG("Rho driver settings updated\r\n");
+    xSemaphoreGive(m_mutex);
 }
 
 // ============================================================================
@@ -969,19 +1037,62 @@ String PolarControl::dumpRhoDriverSettings() {
     return dumpDriverToJson(m_rDriver, "rho");
 }
 
+// Parse a coordinate line (theta, rho format)
+static bool parseLine(const String& line, float maxRho, PolarCord_t& out) {
+    if (line.length() == 0 || line.startsWith("#") || line.startsWith("//")) {
+        return false; // Skip empty/comment lines
+    }
+
+    int sep = line.indexOf(',');
+    if (sep == -1) sep = line.indexOf(' ');
+    if (sep == -1) sep = line.indexOf('\t');
+
+    if (sep != -1) {
+        String thetaStr = line.substring(0, sep);
+        String rhoStr = line.substring(sep + 1);
+        thetaStr.trim();
+        rhoStr.trim();
+
+        out.theta = thetaStr.toFloat();
+        out.rho = rhoStr.toFloat() * maxRho;
+        return true;
+    }
+    return false;
+}
+
 void PolarControl::fileReadTask(void* arg) {
     PolarControl* pc = static_cast<PolarControl*>(arg);
     FileCommand cmd;
-    std::unique_ptr<FilePosGen> fileGen;
+    StreamingFileCache cache;
+    bool cacheActive = false;
+    
+    // State for pending line handling
+    PolarCord_t pendingPos;
+    bool hasPendingPos = false;
 
     while (true) {
         // Check for commands (non-blocking if reading, blocking if idle)
-        if (xQueueReceive(pc->m_cmdQueue, &cmd, fileGen ? 0 : portMAX_DELAY) == pdTRUE) {
+        // If we have a pending pos, we MUST check for STOP commands but ignore LOAD
+        // (though LOAD shouldn't happen while active usually)
+        if (xQueueReceive(pc->m_cmdQueue, &cmd, (cacheActive || hasPendingPos) ? 0 : portMAX_DELAY) == pdTRUE) {
+            LOG("FileTask: Received command %d\r\n", cmd.type);
             if (cmd.type == FileCommand::CMD_LOAD) {
-                fileGen = std_patch::make_unique<FilePosGen>(cmd.filename, cmd.maxRho);
-                pc->m_fileLoading = true;
+                LOG("FileTask: Opening %s with maxRho=%.2f\r\n", cmd.filename, cmd.maxRho);
+                // Open streaming cache (copies first chunk, then streams)
+                if (cache.open(cmd.filename, cmd.maxRho)) {
+                    cacheActive = true;
+                    hasPendingPos = false; // Reset pending
+                    LOG("FileTask: Cache opened, active=true\r\n");
+                } else {
+                    LOG("FileTask: Failed to open cache\r\n");
+                    pc->m_fileLoading = false;
+                    cacheActive = false;
+                }
             } else if (cmd.type == FileCommand::CMD_STOP) {
-                fileGen.reset();
+                LOG("FileTask: Stopping\r\n");
+                cache.close();
+                cacheActive = false;
+                hasPendingPos = false;
                 pc->m_fileLoading = false;
                 // Clear queue
                 PolarCord_t dummy;
@@ -989,22 +1100,42 @@ void PolarControl::fileReadTask(void* arg) {
             }
         }
 
-        if (fileGen) {
-            // Read next position
-            PolarCord_t pos = fileGen->getNextPos();
-            
-            if (pos.isNan()) {
-                // EOF
-                fileGen.reset();
-                pc->m_fileLoading = false;
-            } else {
-                // Push to queue (block if full to provide backpressure)
-                if (xQueueSend(pc->m_coordQueue, &pos, 100) != pdTRUE) {
-                    // Queue full timeout - just loop and try again (or check for stop command)
+        if (cacheActive) {
+            // Maintain cache - copy next chunk if needed
+            cache.maintainCache();
+
+            // Only read next line if we don't have one pending
+            if (!hasPendingPos) {
+                String line = cache.readLine();
+
+                if (cache.isEOF() && line.length() == 0) {
+                    // EOF
+                    cache.close();
+                    cacheActive = false;
+                    pc->m_fileLoading = false;
+                    LOG("Streaming cache: EOF reached\r\n");
+                } else {
+                    if (parseLine(line, cache.getMaxRho(), pendingPos)) {
+                        hasPendingPos = true;
+                    }
+                    // If parse failed (comment/empty), loop continues to read next line
                 }
             }
-        } else {
-            // Idle - just wait for command (handled at top of loop)
+
+            // If we have a position, try to send it
+            if (hasPendingPos) {
+                if (xQueueSend(pc->m_coordQueue, &pendingPos, 0) == pdTRUE) {
+                    // Success
+                    hasPendingPos = false;
+                } else {
+                    // Queue full - yield and retry next loop
+                    vTaskDelay(1);
+                }
+            } else {
+                // Yield to allow other tasks on Core 0 (like WebServer) to run
+                // Only yield if we didn't just push data (to keep throughput high when queue is open)
+                vTaskDelay(1); 
+            }
         }
     }
 }
