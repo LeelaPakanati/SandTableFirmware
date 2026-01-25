@@ -503,7 +503,9 @@ void PolarControl::feedPlanner() {
 // ============================================================================
 
 bool PolarControl::processNextMove() {
+    uint32_t waitStart = micros();
     xSemaphoreTake(m_mutex, portMAX_DELAY);
+    m_mutexWaitProfiler.addSample(micros() - waitStart);
 
     // Let planner process (handles timer internally)
     m_planner.process();
@@ -1157,6 +1159,7 @@ void PolarControl::fileReadTask(void* arg) {
                 if (directFile) {
                     directActive = true;
                     directMaxRho = cmd.maxRho;
+                    pc->m_lastFileLine.store(0);
                     hasPendingPos = false; // Reset pending
                     directBufLen = 0;
                     directBufPos = 0;
@@ -1213,6 +1216,7 @@ void PolarControl::fileReadTask(void* arg) {
                 if (xQueueSend(pc->m_coordQueue, &pendingPos, 0) == pdTRUE) {
                     // Success
                     hasPendingPos = false;
+                    pc->m_lastFileLine.fetch_add(1);
                     // Throttle if the queue is near full to keep Core 0 responsive.
                     UBaseType_t spaces = uxQueueSpacesAvailable(pc->m_coordQueue);
                     if (spaces <= 64) {

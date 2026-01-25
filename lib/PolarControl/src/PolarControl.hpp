@@ -2,6 +2,7 @@
 #include <TMC2209.h>
 #include <Print.h>
 #include "MotionPlanner.hpp"
+#include "Profiler.hpp"
 #include <PosGen.hpp>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -96,6 +97,16 @@ public:
 
   void getDiagnostics(uint32_t& queueDepth, uint32_t& underruns) const { m_planner.getDiagnostics(queueDepth, underruns); }
   void getProfileData(uint32_t& maxProcessUs, uint32_t& maxIntervalUs, uint32_t& avgGenUs) { m_planner.getProfileData(maxProcessUs, maxIntervalUs, avgGenUs); }
+  void getTelemetry(PlannerTelemetry& telemetry) { m_planner.getTelemetry(telemetry); }
+  void getMutexWaitProfile(uint32_t& maxWaitUs, uint32_t& avgWaitUs) {
+    maxWaitUs = m_mutexWaitProfiler.getMax();
+    avgWaitUs = m_mutexWaitProfiler.getAvg();
+    m_mutexWaitProfiler.reset();
+  }
+  uint32_t getCoordQueueDepth() const {
+    return m_coordQueue ? static_cast<uint32_t>(uxQueueMessagesWaiting(m_coordQueue)) : 0;
+  }
+  uint32_t getLastFileLine() const { return m_lastFileLine.load(); }
   uint32_t getFileTaskHighWater() const;
 
   // Reset theta to zero (current position becomes new origin)
@@ -156,12 +167,14 @@ private:
   TMC2209 m_rCDriver;
 
   SemaphoreHandle_t m_mutex = NULL;
+  Profiler m_mutexWaitProfiler;
   
   // Async File Reading
   QueueHandle_t m_coordQueue = NULL;
   QueueHandle_t m_cmdQueue = NULL;
   TaskHandle_t m_fileTaskHandle = NULL;
   volatile bool m_fileLoading = false;
+  std::atomic<uint32_t> m_lastFileLine{0};
 
   std::atomic<State_t> m_state{UNINITIALIZED};
   std::unique_ptr<PosGen> m_posGen;

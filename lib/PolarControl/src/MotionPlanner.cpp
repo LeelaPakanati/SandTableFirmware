@@ -98,6 +98,11 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
     m_stepQueueHead = 0;
     m_stepQueueTail = 0;
     m_completedCount = 0;
+    m_lastUnderrunUs.store(0);
+    m_consecutiveUnderruns.store(0);
+    m_maxConsecutiveUnderruns.store(0);
+    m_minQueueDepth = 0xFFFFFFFFu;
+    m_maxQueueDepth = 0;
 }
 
 bool MotionPlanner::addSegment(float theta, float rho) {
@@ -458,6 +463,12 @@ void MotionPlanner::stop() {
     // Update target positions to match
     m_targetTheta = stepsToTheta(m_executedTSteps);
     m_targetRho = stepsToRho(m_executedRSteps);
+
+    m_lastUnderrunUs.store(0);
+    m_consecutiveUnderruns.store(0);
+    m_maxConsecutiveUnderruns.store(0);
+    m_minQueueDepth = 0xFFFFFFFFu;
+    m_maxQueueDepth = 0;
 }
 
 void MotionPlanner::process() {
@@ -470,9 +481,13 @@ void MotionPlanner::process() {
     if (!m_running) return;
 
     // 1. Generation Loop
-    // Continue generating steps for segments as long as we have space
-    // and are within the lookahead horizon
-    while (m_genSegmentIdx != m_segmentHead) {
+    // Fill until we hit target depth or can't make progress.
+    int queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
+    if (queueDepth < 0) queueDepth = 0;
+    uint32_t processStartUs = micros();
+
+    while (m_genSegmentIdx != m_segmentHead &&
+           static_cast<uint32_t>(queueDepth) < STEP_QUEUE_TARGET_DEPTH) {
         Segment& genSeg = m_segments[m_genSegmentIdx];
         
         // Ensure profile is calculated before generating
@@ -482,7 +497,11 @@ void MotionPlanner::process() {
         }
 
         // Generate steps for this segment
-        fillStepQueue(m_genSegmentIdx, m_genSegmentStartTime);
+        int prevDepth = queueDepth;
+        fillStepQueue(m_genSegmentIdx, m_genSegmentStartTime, STEP_QUEUE_HORIZON_US);
+
+        queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
+        if (queueDepth < 0) queueDepth = 0;
 
         // If this segment is fully generated, move to the next one
         if (genSeg.generationComplete) {
@@ -490,6 +509,12 @@ void MotionPlanner::process() {
             m_genSegmentIdx = (m_genSegmentIdx + 1) % SEGMENT_BUFFER_SIZE;
         } else {
             // Not done generating (queue full or horizon reached)
+            if (queueDepth == prevDepth) {
+                break;
+            }
+        }
+
+        if ((micros() - processStartUs) >= STEP_QUEUE_MAX_PROCESS_US) {
             break;
         }
     }
@@ -511,11 +536,18 @@ void MotionPlanner::process() {
 
     // Auto-start timer if buffer has any data
     if (!m_timerActive) {
-        int queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
         if (queueDepth > 0) {
             esp_timer_start_periodic((esp_timer_handle_t)m_timerHandle, STEP_TIMER_PERIOD_US);
             m_timerActive = true;
         }
+    }
+
+    uint32_t depth = static_cast<uint32_t>(queueDepth);
+    if (m_minQueueDepth == 0xFFFFFFFFu || depth < m_minQueueDepth) {
+        m_minQueueDepth = depth;
+    }
+    if (depth > m_maxQueueDepth) {
+        m_maxQueueDepth = depth;
     }
 
     // 2. Execution Completion Check
@@ -574,7 +606,7 @@ void MotionPlanner::process() {
     m_processProfiler.addSample(micros() - now);
 }
 
-void MotionPlanner::fillStepQueue(int segIdx, uint32_t startTime) {
+void MotionPlanner::fillStepQueue(int segIdx, uint32_t startTime, uint32_t horizonUs) {
     Segment& seg = m_segments[segIdx];
     // No need to check executing/calculated here as process() handles it
     
@@ -593,7 +625,7 @@ void MotionPlanner::fillStepQueue(int segIdx, uint32_t startTime) {
     
     // Determine end time for this batch
     // We want to generate up to HORIZON ahead of current real time
-    float tLimit = wallTime + (STEP_QUEUE_HORIZON_US / 1000000.0f);
+    float tLimit = wallTime + (horizonUs / 1000000.0f);
     float tEnd = std::min(segDuration, tLimit);
 
     // If we are already ahead of the horizon, don't generate anything
@@ -854,6 +886,27 @@ void MotionPlanner::getProfileData(uint32_t& maxProcessUs, uint32_t& maxInterval
     m_genProfiler.reset();
 }
 
+void MotionPlanner::getTelemetry(PlannerTelemetry& out) {
+    int queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
+    if (queueDepth < 0) queueDepth = 0;
+    out.queueDepth = static_cast<uint32_t>(queueDepth);
+    out.minQueueDepth = (m_minQueueDepth == 0xFFFFFFFFu) ? out.queueDepth : m_minQueueDepth;
+    out.maxQueueDepth = m_maxQueueDepth;
+    out.underruns = m_underrunCount.load();
+    out.consecutiveUnderruns = m_consecutiveUnderruns.load();
+    out.maxConsecutiveUnderruns = m_maxConsecutiveUnderruns.exchange(out.consecutiveUnderruns);
+    out.lastUnderrunUs = m_lastUnderrunUs.load();
+    out.segmentHead = static_cast<uint32_t>(m_segmentHead);
+    out.segmentTail = static_cast<uint32_t>(m_segmentTail);
+    out.genSegmentIdx = static_cast<uint32_t>(m_genSegmentIdx);
+    out.completedCount = m_completedCount;
+    out.timerActive = m_timerActive;
+    out.running = m_running;
+
+    m_minQueueDepth = out.queueDepth;
+    m_maxQueueDepth = out.queueDepth;
+}
+
 int32_t MotionPlanner::thetaToSteps(float theta) const {
     return (int32_t)(theta * m_stepsPerRadT);
 }
@@ -880,7 +933,14 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
     // Check if there's a step event ready to execute
     if (m_stepQueueHead == m_stepQueueTail) {
         if (m_running) {
-             m_underrunCount++;
+            uint32_t now = micros();
+            m_underrunCount++;
+            m_lastUnderrunUs.store(now);
+            uint32_t consecutive = m_consecutiveUnderruns.fetch_add(1) + 1;
+            uint32_t prevMax = m_maxConsecutiveUnderruns.load();
+            while (consecutive > prevMax &&
+                   !m_maxConsecutiveUnderruns.compare_exchange_weak(prevMax, consecutive)) {
+            }
         }
         return;  // Queue empty
     }
@@ -938,4 +998,5 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
 
     // Advance queue tail
     m_stepQueueTail = (m_stepQueueTail + 1) % STEP_QUEUE_SIZE;
+    m_consecutiveUnderruns.store(0);
 }

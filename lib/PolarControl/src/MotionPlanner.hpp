@@ -24,10 +24,12 @@
 
 // Configuration constants
 static constexpr int SEGMENT_BUFFER_SIZE = 32;
-static constexpr int STEP_QUEUE_SIZE = 4096;
+static constexpr int STEP_QUEUE_SIZE = 1024;
 static constexpr float MIN_SEGMENT_DURATION = 0.010f;  // 10ms minimum
 static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
-static constexpr uint32_t STEP_QUEUE_HORIZON_US = 300000;  // 300ms lookahead
+static constexpr uint32_t STEP_QUEUE_HORIZON_US = 800000;  // 800ms lookahead
+static constexpr uint32_t STEP_QUEUE_TARGET_DEPTH = 800;  // ~80ms @ 10kHz
+static constexpr uint32_t STEP_QUEUE_MAX_PROCESS_US = 20000;
 
 // Per-axis motion profile
 struct AxisProfile {
@@ -75,6 +77,22 @@ struct StepEvent {
     uint32_t executeTime;      // Microsecond timestamp (relative to segment start)
     uint8_t stepMask;          // bit 0 = theta, bit 1 = rho
     uint8_t dirMask;           // direction bits: bit 0 = theta dir, bit 1 = rho dir
+};
+
+struct PlannerTelemetry {
+    uint32_t queueDepth = 0;
+    uint32_t minQueueDepth = 0;
+    uint32_t maxQueueDepth = 0;
+    uint32_t underruns = 0;
+    uint32_t consecutiveUnderruns = 0;
+    uint32_t maxConsecutiveUnderruns = 0;
+    uint32_t lastUnderrunUs = 0;
+    uint32_t segmentHead = 0;
+    uint32_t segmentTail = 0;
+    uint32_t genSegmentIdx = 0;
+    uint32_t completedCount = 0;
+    bool timerActive = false;
+    bool running = false;
 };
 
 // Motion planner with independent axis control and S-curve profiles
@@ -146,6 +164,9 @@ public:
     // Get profiling data
     void getProfileData(uint32_t& maxProcessUs, uint32_t& maxIntervalUs, uint32_t& avgGenUs);
 
+    // Get extended telemetry (resets min/max queue depth and max consecutive underruns)
+    void getTelemetry(PlannerTelemetry& out);
+
 private:
     // Physical parameters
     int m_stepsPerMmR;
@@ -191,6 +212,13 @@ private:
     volatile int m_stepQueueTail;    // Next position to read (ISR)
     std::atomic<uint32_t> m_underrunCount{0}; // Track queue underruns
 
+    std::atomic<uint32_t> m_lastUnderrunUs{0};
+    std::atomic<uint32_t> m_consecutiveUnderruns{0};
+    std::atomic<uint32_t> m_maxConsecutiveUnderruns{0};
+
+    uint32_t m_minQueueDepth = 0xFFFFFFFFu;
+    uint32_t m_maxQueueDepth = 0;
+
     // Timing
     uint32_t m_segmentStartTime;     // Microseconds when current segment started
     float m_segmentElapsed;          // Time elapsed in current segment
@@ -206,7 +234,7 @@ private:
 
     // Internal methods
     void calculateSegmentProfile(Segment& seg);
-    void fillStepQueue(int segIdx, uint32_t startTime);
+    void fillStepQueue(int segIdx, uint32_t startTime, uint32_t horizonUs);
     int getStepQueueSpace() const;
     bool queueStepEvent(uint32_t time, uint8_t stepMask, uint8_t dirMask);
 
