@@ -12,6 +12,7 @@ public:
         int progress = polarControl->getProgressPercent();
         uint8_t brightness = ledController->getBrightness();
         int brightnessPercent = map(brightness, 0, 255, 0, 100);
+        uint8_t speed = polarControl->getSpeed();
         uint32_t heap = ESP.getFreeHeap();
         uint32_t uptime = millis() / 1000;
 
@@ -23,6 +24,8 @@ public:
         out.print(progress);
         out.print(",\"ledBrightness\":");
         out.print(brightnessPercent);
+        out.print(",\"speed\":");
+        out.print(speed);
         out.print(",\"heap\":");
         out.print(heap);
         out.print(",\"uptime\":");

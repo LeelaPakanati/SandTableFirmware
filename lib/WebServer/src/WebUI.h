@@ -1361,6 +1361,12 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     document.getElementById('brightness-value').textContent = status.ledBrightness + '%';
                 }
 
+                const speedSlider = document.getElementById('speed-slider');
+                if (document.activeElement !== speedSlider && status.speed !== undefined) {
+                    speedSlider.value = status.speed;
+                    document.getElementById('speed-value').textContent = status.speed;
+                }
+
                 // Update file progress bar
                 const progress = status.progress;
                 const isRunning = status.state === 'RUNNING' || status.state === 'CLEARING';

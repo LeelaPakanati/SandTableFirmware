@@ -957,7 +957,7 @@ void SisyphusWebServer::handleLEDBrightnessSet(AsyncWebServerRequest *request) {
 
 void SisyphusWebServer::handleSpeedGet(AsyncWebServerRequest *request) {
     JsonDocument doc;
-    doc["speed"] = 5;
+    doc["speed"] = m_polarControl->getSpeed();
 
     AsyncResponseStream *response = request->beginResponseStream("application/json", kResponseBufferSize);
     serializeJson(doc, *response);
