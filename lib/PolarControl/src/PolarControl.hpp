@@ -175,6 +175,8 @@ private:
   TaskHandle_t m_fileTaskHandle = NULL;
   volatile bool m_fileLoading = false;
   std::atomic<uint32_t> m_lastFileLine{0};
+  std::atomic<uint32_t> m_lastFilePos{0};
+  std::atomic<uint32_t> m_lastFileSize{0};
 
   std::atomic<State_t> m_state{UNINITIALIZED};
   std::unique_ptr<PosGen> m_posGen;

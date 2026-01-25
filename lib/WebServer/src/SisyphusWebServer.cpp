@@ -493,10 +493,14 @@ void SisyphusWebServer::broadcastSinglePosition(AsyncEventSourceClient *client) 
     snprintf(buffer, sizeof(buffer), "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f}", 
              norm.x, norm.y, actualPos.rho, actualPos.theta);
 
-    if (client) {
-        client->send(buffer, "pos", millis());
-    } else {
-        m_events.send(buffer, "pos", millis());
+    try {
+        if (client) {
+            client->send(buffer, "pos", millis());
+        } else {
+            m_events.send(buffer, "pos", millis());
+        }
+    } catch (...) {
+        // Drop the event on allocation failure to avoid crashing Core 0.
     }
 }
 
@@ -510,9 +514,9 @@ void SisyphusWebServer::broadcastPosition() {
         return;
     }
 
-    // Broadcast position check every 200ms (~5Hz)
+    // Broadcast position check every ~66ms (~15Hz)
     unsigned long now = millis();
-    if (now - m_lastPosBroadcast < 200) return;
+    if (now - m_lastPosBroadcast < 66) return;
     m_lastPosBroadcast = now;
 
     if (m_events.count() == 0) return;
@@ -541,7 +545,11 @@ void SisyphusWebServer::broadcastPosition() {
         char buffer[128];
         snprintf(buffer, sizeof(buffer), "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f,\"clear\":1}", 
                  norm.x, norm.y, actualPos.rho, actualPos.theta);
-        m_events.send(buffer, "pos", millis());
+        try {
+            m_events.send(buffer, "pos", millis());
+        } catch (...) {
+            // Drop the event on allocation failure to avoid crashing Core 0.
+        }
     } else {
         broadcastSinglePosition();
     }

@@ -426,6 +426,13 @@ int PolarControl::getProgressPercent() const {
     int progress = -1;
     if (m_posGen) {
         progress = m_posGen->getProgressPercent();
+    } else {
+        uint32_t size = m_lastFileSize.load();
+        if (size > 0) {
+            uint32_t pos = m_lastFilePos.load();
+            if (pos > size) pos = size;
+            progress = static_cast<int>((pos * 100) / size);
+        }
     }
     xSemaphoreGive(m_mutex);
     return progress;
@@ -1160,6 +1167,8 @@ void PolarControl::fileReadTask(void* arg) {
                     directActive = true;
                     directMaxRho = cmd.maxRho;
                     pc->m_lastFileLine.store(0);
+                    pc->m_lastFilePos.store(0);
+                    pc->m_lastFileSize.store(static_cast<uint32_t>(directFile.size()));
                     hasPendingPos = false; // Reset pending
                     directBufLen = 0;
                     directBufPos = 0;
@@ -1169,6 +1178,8 @@ void PolarControl::fileReadTask(void* arg) {
                     LOG("FileTask: Failed to open file\r\n");
                     pc->m_fileLoading = false;
                     directActive = false;
+                    pc->m_lastFilePos.store(0);
+                    pc->m_lastFileSize.store(0);
                 }
             } else if (cmd.type == FileCommand::CMD_STOP) {
                 LOG("FileTask: Stopping\r\n");
@@ -1178,6 +1189,8 @@ void PolarControl::fileReadTask(void* arg) {
                 directActive = false;
                 hasPendingPos = false;
                 pc->m_fileLoading = false;
+                pc->m_lastFilePos.store(0);
+                pc->m_lastFileSize.store(0);
                 // Clear queue
                 PolarCord_t dummy;
                 while (xQueueReceive(pc->m_coordQueue, &dummy, 0) == pdTRUE);
@@ -1202,8 +1215,10 @@ void PolarControl::fileReadTask(void* arg) {
                     directFile.close();
                     directActive = false;
                     pc->m_fileLoading = false;
+                    pc->m_lastFilePos.store(pc->m_lastFileSize.load());
                     LOG("Direct file: EOF reached\r\n");
                 } else {
+                    pc->m_lastFilePos.store(static_cast<uint32_t>(directFile.position()));
                     if (!lineOverflow && parseLine(lineBuffer, directMaxRho, pendingPos)) {
                         hasPendingPos = true;
                     }
