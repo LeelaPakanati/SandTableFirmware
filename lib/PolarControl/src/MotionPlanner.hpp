@@ -24,12 +24,18 @@
 
 // Configuration constants
 static constexpr int SEGMENT_BUFFER_SIZE = 32;
-static constexpr int STEP_QUEUE_SIZE = 1024;
+static constexpr int STEP_QUEUE_SIZE = 512;
 static constexpr float MIN_SEGMENT_DURATION = 0.010f;  // 10ms minimum
-static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
-static constexpr uint32_t STEP_QUEUE_HORIZON_US = 800000;  // 800ms lookahead
-static constexpr uint32_t STEP_QUEUE_TARGET_DEPTH = 800;  // ~80ms @ 10kHz
+static constexpr uint32_t STEP_TIMER_PERIOD_US = 67;  // 15kHz ISR
+static constexpr uint32_t STEP_QUEUE_HORIZON_US = 1000000;  // 1000ms lookahead
 static constexpr uint32_t STEP_QUEUE_MAX_PROCESS_US = 20000;
+
+enum class FillStopReason : uint32_t {
+    None = 0,
+    Horizon = 1,
+    QueueFull = 2,
+    TimeBudget = 3,
+};
 
 // Per-axis motion profile
 struct AxisProfile {
@@ -91,6 +97,10 @@ struct PlannerTelemetry {
     uint32_t segmentTail = 0;
     uint32_t genSegmentIdx = 0;
     uint32_t completedCount = 0;
+    uint32_t fillStopHorizon = 0;
+    uint32_t fillStopQueueFull = 0;
+    uint32_t fillStopTimeBudget = 0;
+    uint32_t lastFillStopReason = 0;
     bool timerActive = false;
     bool running = false;
 };
@@ -218,6 +228,10 @@ private:
 
     uint32_t m_minQueueDepth = 0xFFFFFFFFu;
     uint32_t m_maxQueueDepth = 0;
+    std::atomic<uint32_t> m_fillStopHorizonCount{0};
+    std::atomic<uint32_t> m_fillStopQueueFullCount{0};
+    std::atomic<uint32_t> m_fillStopTimeBudgetCount{0};
+    std::atomic<uint32_t> m_lastFillStopReason{0};
 
     // Timing
     uint32_t m_segmentStartTime;     // Microseconds when current segment started
@@ -234,7 +248,7 @@ private:
 
     // Internal methods
     void calculateSegmentProfile(Segment& seg);
-    void fillStepQueue(int segIdx, uint32_t startTime, uint32_t horizonUs);
+    void fillStepQueue(uint32_t horizonUs);
     int getStepQueueSpace() const;
     bool queueStepEvent(uint32_t time, uint8_t stepMask, uint8_t dirMask);
 

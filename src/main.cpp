@@ -54,7 +54,7 @@ void motorTask(void *parameter) {
             polarControl.getMutexWaitProfile(maxMutexWait, avgMutexWait);
 
             if (state == PolarControl::RUNNING || state == PolarControl::CLEARING || state == PolarControl::PREPARING) {
-                LOG("[MOTOR Core%d] Pos: ρ=%.0f θ=%.0f° | Q: %u | UR: %u | Loop: %.0f/s | MaxProc: %uus | MaxInt: %uus | AvgGen: %uus | MutexW max/avg: %u/%u\r\n",
+                LOG("[MOTOR Core%d] Pos: ρ=%.0f θ=%.0f° | Q: %u | UR: %u | Loop: %.0f/s | MaxProc: %uus | MaxInt: %uus | AvgGen: %uus | MutexW max/avg: %u/%u | FillStop H/Q/T: %u/%u/%u | LastStop: %u\r\n",
                               xPortGetCoreID(),
                               pos.rho,
                               pos.theta * 180.0 / PI,
@@ -65,7 +65,11 @@ void motorTask(void *parameter) {
                               maxInt,
                               avgGen,
                               maxMutexWait,
-                              avgMutexWait);
+                              avgMutexWait,
+                              telemetry.fillStopHorizon,
+                              telemetry.fillStopQueueFull,
+                              telemetry.fillStopTimeBudget,
+                              telemetry.lastFillStopReason);
             }
 
             if (telemetry.underruns > lastUnderruns) {

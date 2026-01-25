@@ -481,42 +481,13 @@ void MotionPlanner::process() {
     if (!m_running) return;
 
     // 1. Generation Loop
-    // Fill until we hit target depth or can't make progress.
+    // Fill once per call; fillStepQueue will span segments until horizon or queue full.
     int queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
     if (queueDepth < 0) queueDepth = 0;
-    uint32_t processStartUs = micros();
-
-    while (m_genSegmentIdx != m_segmentHead &&
-           static_cast<uint32_t>(queueDepth) < STEP_QUEUE_TARGET_DEPTH) {
-        Segment& genSeg = m_segments[m_genSegmentIdx];
-        
-        // Ensure profile is calculated before generating
-        if (!genSeg.calculated) {
-            // Should have been calculated by recalculate(), but just in case
-            calculateSegmentProfile(genSeg);
-        }
-
-        // Generate steps for this segment
-        int prevDepth = queueDepth;
-        fillStepQueue(m_genSegmentIdx, m_genSegmentStartTime, STEP_QUEUE_HORIZON_US);
-
+    if (m_genSegmentIdx != m_segmentHead) {
+        fillStepQueue(STEP_QUEUE_HORIZON_US);
         queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
         if (queueDepth < 0) queueDepth = 0;
-
-        // If this segment is fully generated, move to the next one
-        if (genSeg.generationComplete) {
-            m_genSegmentStartTime += (uint32_t)(genSeg.duration * 1000000.0f);
-            m_genSegmentIdx = (m_genSegmentIdx + 1) % SEGMENT_BUFFER_SIZE;
-        } else {
-            // Not done generating (queue full or horizon reached)
-            if (queueDepth == prevDepth) {
-                break;
-            }
-        }
-
-        if ((micros() - processStartUs) >= STEP_QUEUE_MAX_PROCESS_US) {
-            break;
-        }
     }
 
     // If we have segments but none are executing, start the first one
@@ -606,143 +577,179 @@ void MotionPlanner::process() {
     m_processProfiler.addSample(micros() - now);
 }
 
-void MotionPlanner::fillStepQueue(int segIdx, uint32_t startTime, uint32_t horizonUs) {
-    Segment& seg = m_segments[segIdx];
-    // No need to check executing/calculated here as process() handles it
-    
+void MotionPlanner::fillStepQueue(uint32_t horizonUs) {
     uint32_t startUs = micros();
     uint32_t now = startUs;
+    static constexpr float SAMPLE_INTERVAL = STEP_TIMER_PERIOD_US / 1000000.0f;
+    m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::None));
 
-    float segDuration = seg.duration;
+    while (m_genSegmentIdx != m_segmentHead) {
+        if ((micros() - startUs) >= STEP_QUEUE_MAX_PROCESS_US) {
+            m_fillStopTimeBudgetCount.fetch_add(1);
+            m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::TimeBudget));
+            break;
+        }
+        Segment& seg = m_segments[m_genSegmentIdx];
 
-    // Calculate current wall-clock position relative to THIS segment's start time
-    // If startTime is in the future, wallTime will be negative, which is correct
-    int32_t timeDiff = (int32_t)(now - startTime);
-    float wallTime = timeDiff / 1000000.0f;
+        if (!seg.calculated) {
+            calculateSegmentProfile(seg);
+        }
 
-    // Start generating from where we last generated
-    float t = seg.lastGenTime;
-    
-    // Determine end time for this batch
-    // We want to generate up to HORIZON ahead of current real time
-    float tLimit = wallTime + (horizonUs / 1000000.0f);
-    float tEnd = std::min(segDuration, tLimit);
+        uint32_t startTime = m_genSegmentStartTime;
+        float segDuration = seg.duration;
 
-    // If we are already ahead of the horizon, don't generate anything
-    if (t >= tEnd) {
+        // Calculate current wall-clock position relative to THIS segment's start time
+        // If startTime is in the future, wallTime will be negative, which is correct
+        int32_t timeDiff = (int32_t)(now - startTime);
+        float wallTime = timeDiff / 1000000.0f;
+
+        // Start generating from where we last generated
+        float t = seg.lastGenTime;
+
+        // Determine end time for this batch
+        // We want to generate up to HORIZON ahead of current real time
+        float tLimit = wallTime + (horizonUs / 1000000.0f);
+        float tEnd = std::min(segDuration, tLimit);
+
+        // If we are already ahead of the horizon, don't generate anything
+        if (t >= tEnd) {
+            if (t >= segDuration - 0.000001f) {
+                seg.generationComplete = true;
+                m_genSegmentStartTime += (uint32_t)(seg.duration * 1000000.0f);
+                m_genSegmentIdx = (m_genSegmentIdx + 1) % SEGMENT_BUFFER_SIZE;
+                continue;
+            }
+            m_fillStopHorizonCount.fetch_add(1);
+            m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::Horizon));
+            break;
+        }
+
+        int32_t lastThetaSteps = seg.lastGenThetaSteps;
+        int32_t lastRhoSteps = seg.lastGenRhoSteps;
+
+        // Cache profile references for faster access
+        const SCurve::Profile& thetaProf = seg.theta.profile;
+        const SCurve::Profile& rhoProf = seg.rho.profile;
+        float thetaTimeScale = seg.theta.timeScale;
+        float rhoTimeScale = seg.rho.timeScale;
+
+        while (t <= tEnd) {
+            if ((micros() - startUs) >= STEP_QUEUE_MAX_PROCESS_US) {
+                seg.lastGenTime = t;
+                seg.lastGenThetaSteps = lastThetaSteps;
+                seg.lastGenRhoSteps = lastRhoSteps;
+                m_fillStopTimeBudgetCount.fetch_add(1);
+                m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::TimeBudget));
+                m_genProfiler.addSample(micros() - startUs);
+                return;
+            }
+            // Get position from S-curve profile (with time scaling)
+            float thetaProfileTime = t / thetaTimeScale;
+            float rhoProfileTime = t / rhoTimeScale;
+
+            // Get fractional position (0 to 1)
+            float thetaFrac = (thetaProf.totalDistance > 0.0f)
+                ? SCurve::getPosition(thetaProf, thetaProfileTime, seg.thetaPhaseIdx) / thetaProf.totalDistance
+                : 0.0f;
+            float rhoFrac = (rhoProf.totalDistance > 0.0f)
+                ? SCurve::getPosition(rhoProf, rhoProfileTime, seg.rhoPhaseIdx) / rhoProf.totalDistance
+                : 0.0f;
+
+            // Calculate target steps
+            int32_t targetThetaSteps, targetRhoSteps;
+            if (t >= segDuration - 0.000001f) {
+                targetThetaSteps = seg.theta.targetSteps;
+                targetRhoSteps = seg.rho.targetSteps;
+            } else {
+                targetThetaSteps = seg.theta.startSteps + (int32_t)lroundf(thetaFrac * seg.theta.deltaSteps);
+                targetRhoSteps = seg.rho.startSteps + (int32_t)lroundf(rhoFrac * seg.rho.deltaSteps);
+
+                // Safety: clamp to target to prevent overshooting due to rounding
+                if (seg.theta.deltaSteps > 0) {
+                    targetThetaSteps = std::min(targetThetaSteps, seg.theta.targetSteps);
+                } else if (seg.theta.deltaSteps < 0) {
+                    targetThetaSteps = std::max(targetThetaSteps, seg.theta.targetSteps);
+                }
+
+                if (seg.rho.deltaSteps > 0) {
+                    targetRhoSteps = std::min(targetRhoSteps, seg.rho.targetSteps);
+                } else if (seg.rho.deltaSteps < 0) {
+                    targetRhoSteps = std::max(targetRhoSteps, seg.rho.targetSteps);
+                }
+            }
+
+            // Generate step events for any steps needed
+            // Use startTime (the segment's absolute start) + t
+            uint32_t eventTime = startTime + (uint32_t)(t * 1000000.0f);
+
+            while (lastThetaSteps != targetThetaSteps || lastRhoSteps != targetRhoSteps) {
+                uint8_t stepMask = 0;
+                uint8_t dirMask = 0;
+
+                if (lastThetaSteps != targetThetaSteps) {
+                    stepMask |= 0x01;
+                    if (targetThetaSteps > lastThetaSteps) {
+                        dirMask |= 0x01;  // Forward
+                        lastThetaSteps++;
+                    } else {
+                        lastThetaSteps--;
+                    }
+                }
+
+                if (lastRhoSteps != targetRhoSteps) {
+                    stepMask |= 0x02;
+                    if (targetRhoSteps > lastRhoSteps) {
+                        dirMask |= 0x02;  // Forward
+                        lastRhoSteps++;
+                    } else {
+                        lastRhoSteps--;
+                    }
+                }
+
+                if (stepMask != 0) {
+                    if (!queueStepEvent(eventTime, stepMask, dirMask)) {
+                        // Queue full - roll back steps and exit
+                        if (stepMask & 0x01) {
+                            if (dirMask & 0x01) lastThetaSteps--;
+                            else lastThetaSteps++;
+                        }
+                        if (stepMask & 0x02) {
+                            if (dirMask & 0x02) lastRhoSteps--;
+                            else lastRhoSteps++;
+                        }
+
+                        seg.lastGenTime = t;
+                        seg.lastGenThetaSteps = lastThetaSteps;
+                        seg.lastGenRhoSteps = lastRhoSteps;
+                        m_fillStopQueueFullCount.fetch_add(1);
+                        m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::QueueFull));
+                        m_genProfiler.addSample(micros() - startUs);
+                        return;
+                    }
+                }
+            }
+
+            if (t >= segDuration - 0.000001f) break;
+            t += SAMPLE_INTERVAL;
+            if (t > segDuration) t = segDuration;
+        }
+
+        // Finished this segment batch - save state
+        seg.lastGenTime = t;
+        seg.lastGenThetaSteps = lastThetaSteps;
+        seg.lastGenRhoSteps = lastRhoSteps;
+
         if (t >= segDuration - 0.000001f) {
             seg.generationComplete = true;
-        }
-        return;
-    }
-
-    static constexpr float SAMPLE_INTERVAL = STEP_TIMER_PERIOD_US / 1000000.0f;
-
-    int32_t lastThetaSteps = seg.lastGenThetaSteps;
-    int32_t lastRhoSteps = seg.lastGenRhoSteps;
-
-    // Cache profile references for faster access
-    const SCurve::Profile& thetaProf = seg.theta.profile;
-    const SCurve::Profile& rhoProf = seg.rho.profile;
-    float thetaTimeScale = seg.theta.timeScale;
-    float rhoTimeScale = seg.rho.timeScale;
-
-    while (t <= tEnd) {
-        // Get position from S-curve profile (with time scaling)
-        float thetaProfileTime = t / thetaTimeScale;
-        float rhoProfileTime = t / rhoTimeScale;
-
-        // Get fractional position (0 to 1)
-        float thetaFrac = (thetaProf.totalDistance > 0.0f)
-            ? SCurve::getPosition(thetaProf, thetaProfileTime, seg.thetaPhaseIdx) / thetaProf.totalDistance
-            : 0.0f;
-        float rhoFrac = (rhoProf.totalDistance > 0.0f)
-            ? SCurve::getPosition(rhoProf, rhoProfileTime, seg.rhoPhaseIdx) / rhoProf.totalDistance
-            : 0.0f;
-
-        // Calculate target steps
-        int32_t targetThetaSteps, targetRhoSteps;
-        if (t >= segDuration - 0.000001f) {
-            targetThetaSteps = seg.theta.targetSteps;
-            targetRhoSteps = seg.rho.targetSteps;
-        } else {
-            targetThetaSteps = seg.theta.startSteps + (int32_t)lroundf(thetaFrac * seg.theta.deltaSteps);
-            targetRhoSteps = seg.rho.startSteps + (int32_t)lroundf(rhoFrac * seg.rho.deltaSteps);
-
-            // Safety: clamp to target to prevent overshooting due to rounding
-            if (seg.theta.deltaSteps > 0) {
-                targetThetaSteps = std::min(targetThetaSteps, seg.theta.targetSteps);
-            } else if (seg.theta.deltaSteps < 0) {
-                targetThetaSteps = std::max(targetThetaSteps, seg.theta.targetSteps);
-            }
-
-            if (seg.rho.deltaSteps > 0) {
-                targetRhoSteps = std::min(targetRhoSteps, seg.rho.targetSteps);
-            } else if (seg.rho.deltaSteps < 0) {
-                targetRhoSteps = std::max(targetRhoSteps, seg.rho.targetSteps);
-            }
+            m_genSegmentStartTime += (uint32_t)(seg.duration * 1000000.0f);
+            m_genSegmentIdx = (m_genSegmentIdx + 1) % SEGMENT_BUFFER_SIZE;
+            continue;
         }
 
-        // Generate step events for any steps needed
-        // Use startTime (the segment's absolute start) + t
-        uint32_t eventTime = startTime + (uint32_t)(t * 1000000.0f);
-
-        while (lastThetaSteps != targetThetaSteps || lastRhoSteps != targetRhoSteps) {
-            uint8_t stepMask = 0;
-            uint8_t dirMask = 0;
-
-            if (lastThetaSteps != targetThetaSteps) {
-                stepMask |= 0x01;
-                if (targetThetaSteps > lastThetaSteps) {
-                    dirMask |= 0x01;  // Forward
-                    lastThetaSteps++;
-                } else {
-                    lastThetaSteps--;
-                }
-            }
-
-            if (lastRhoSteps != targetRhoSteps) {
-                stepMask |= 0x02;
-                if (targetRhoSteps > lastRhoSteps) {
-                    dirMask |= 0x02;  // Forward
-                    lastRhoSteps++;
-                } else {
-                    lastRhoSteps--;
-                }
-            }
-
-            if (stepMask != 0) {
-                if (!queueStepEvent(eventTime, stepMask, dirMask)) {
-                    // Queue full - roll back steps and exit
-                    if (stepMask & 0x01) {
-                        if (dirMask & 0x01) lastThetaSteps--;
-                        else lastThetaSteps++;
-                    }
-                    if (stepMask & 0x02) {
-                        if (dirMask & 0x02) lastRhoSteps--;
-                        else lastRhoSteps++;
-                    }
-
-                    seg.lastGenTime = t;
-                    seg.lastGenThetaSteps = lastThetaSteps;
-                    seg.lastGenRhoSteps = lastRhoSteps;
-                    return;
-                }
-            }
-        }
-
-        if (t >= segDuration - 0.000001f) break;
-        t += SAMPLE_INTERVAL;
-        if (t > segDuration) t = segDuration;
-    }
-
-    // Finished this batch - save state
-    seg.lastGenTime = t;
-    seg.lastGenThetaSteps = lastThetaSteps;
-    seg.lastGenRhoSteps = lastRhoSteps;
-
-    if (t >= segDuration - 0.000001f) {
-        seg.generationComplete = true;
+        // Horizon reached within this segment; stop.
+        m_fillStopHorizonCount.fetch_add(1);
+        m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::Horizon));
+        break;
     }
 
     m_genProfiler.addSample(micros() - startUs);
@@ -900,6 +907,10 @@ void MotionPlanner::getTelemetry(PlannerTelemetry& out) {
     out.segmentTail = static_cast<uint32_t>(m_segmentTail);
     out.genSegmentIdx = static_cast<uint32_t>(m_genSegmentIdx);
     out.completedCount = m_completedCount;
+    out.fillStopHorizon = m_fillStopHorizonCount.exchange(0);
+    out.fillStopQueueFull = m_fillStopQueueFullCount.exchange(0);
+    out.fillStopTimeBudget = m_fillStopTimeBudgetCount.exchange(0);
+    out.lastFillStopReason = m_lastFillStopReason.load();
     out.timerActive = m_timerActive;
     out.running = m_running;
 

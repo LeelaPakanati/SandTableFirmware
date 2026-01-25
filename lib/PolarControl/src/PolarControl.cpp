@@ -1210,6 +1210,12 @@ void PolarControl::fileReadTask(void* arg) {
                     sizeof(lineBuffer),
                     lineLen,
                     lineOverflow);
+                size_t unreadBytes = 0;
+                if (directBufLen >= directBufPos) {
+                    unreadBytes = directBufLen - directBufPos;
+                }
+                size_t filePos = directFile.position();
+                size_t consumedPos = (filePos >= unreadBytes) ? (filePos - unreadBytes) : 0;
 
                 if (!hasLine && directEof) {
                     directFile.close();
@@ -1218,7 +1224,7 @@ void PolarControl::fileReadTask(void* arg) {
                     pc->m_lastFilePos.store(pc->m_lastFileSize.load());
                     LOG("Direct file: EOF reached\r\n");
                 } else {
-                    pc->m_lastFilePos.store(static_cast<uint32_t>(directFile.position()));
+                    pc->m_lastFilePos.store(static_cast<uint32_t>(consumedPos));
                     if (!lineOverflow && parseLine(lineBuffer, directMaxRho, pendingPos)) {
                         hasPendingPos = true;
                     }
