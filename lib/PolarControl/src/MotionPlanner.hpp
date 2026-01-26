@@ -94,19 +94,9 @@ struct StepEvent {
 struct PlannerTelemetry {
     uint32_t queueDepth = 0;
     uint32_t minQueueDepth = 0;
-    uint32_t maxQueueDepth = 0;
     uint32_t underruns = 0;
-    uint32_t consecutiveUnderruns = 0;
     uint32_t maxConsecutiveUnderruns = 0;
-    uint32_t lastUnderrunUs = 0;
-    uint32_t segmentHead = 0;
-    uint32_t segmentTail = 0;
-    uint32_t genSegmentIdx = 0;
     uint32_t completedCount = 0;
-    uint32_t fillStopHorizon = 0;
-    uint32_t fillStopQueueFull = 0;
-    uint32_t fillStopTimeBudget = 0;
-    uint32_t lastFillStopReason = 0;
     bool timerActive = false;
     bool running = false;
 };
@@ -231,16 +221,10 @@ private:
     volatile int m_stepQueueTail;    // Next position to read (ISR)
     std::atomic<uint32_t> m_underrunCount{0}; // Track queue underruns
 
-    std::atomic<uint32_t> m_lastUnderrunUs{0};
     std::atomic<uint32_t> m_consecutiveUnderruns{0};
     std::atomic<uint32_t> m_maxConsecutiveUnderruns{0};
 
     uint32_t m_minQueueDepth = 0xFFFFFFFFu;
-    uint32_t m_maxQueueDepth = 0;
-    std::atomic<uint32_t> m_fillStopHorizonCount{0};
-    std::atomic<uint32_t> m_fillStopQueueFullCount{0};
-    std::atomic<uint32_t> m_fillStopTimeBudgetCount{0};
-    std::atomic<uint32_t> m_lastFillStopReason{0};
     uint32_t m_lastQueuedEventTime = 0;
 
     // Timing
@@ -259,7 +243,7 @@ private:
 
     // Internal methods
     void calculateSegmentProfile(Segment& seg);
-    void fillStepQueue(uint32_t horizonUs);
+    FillStopReason fillStepQueue(uint32_t horizonUs);
     int getStepQueueSpace() const;
     bool queueStepEvent(uint32_t time, uint8_t stepMask, uint8_t dirMask);
 

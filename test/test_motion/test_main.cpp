@@ -600,7 +600,6 @@ bool testSlowMotionStartup() {
 
     std::cout << "Queue depth: " << t.queueDepth << std::endl;
     std::cout << "Timer active: " << t.timerActive << std::endl;
-    std::cout << "Last Fill Stop Reason: " << t.lastFillStopReason << " (1=Horizon)" << std::endl;
 
     // Check if running
     bool passed = t.timerActive;

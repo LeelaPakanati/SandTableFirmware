@@ -98,12 +98,10 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
     m_stepQueueHead = 0;
     m_stepQueueTail = 0;
     m_completedCount = 0;
-    m_lastUnderrunUs.store(0);
     m_underrunCount.store(0);
     m_consecutiveUnderruns.store(0);
     m_maxConsecutiveUnderruns.store(0);
     m_minQueueDepth = 0xFFFFFFFFu;
-    m_maxQueueDepth = 0;
 }
 
 bool MotionPlanner::addSegment(float theta, float rho) {
@@ -468,11 +466,9 @@ void MotionPlanner::stop() {
     m_targetTheta = stepsToTheta(m_executedTSteps);
     m_targetRho = stepsToRho(m_executedRSteps);
 
-    m_lastUnderrunUs.store(0);
     m_consecutiveUnderruns.store(0);
     m_maxConsecutiveUnderruns.store(0);
     m_minQueueDepth = 0xFFFFFFFFu;
-    m_maxQueueDepth = 0;
     m_lastQueuedEventTime = 0;
 }
 
@@ -489,8 +485,11 @@ void MotionPlanner::process() {
     // Fill once per call; fillStepQueue will span segments until horizon or queue full.
     int queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
     if (queueDepth < 0) queueDepth = 0;
+    
+    FillStopReason lastStopReason = FillStopReason::None;
+    
     if (m_genSegmentIdx != m_segmentHead) {
-        fillStepQueue(STEP_QUEUE_HORIZON_US);
+        lastStopReason = fillStepQueue(STEP_QUEUE_HORIZON_US);
         queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
         if (queueDepth < 0) queueDepth = 0;
     }
@@ -512,7 +511,7 @@ void MotionPlanner::process() {
 
     if (m_startupHoldoff) {
         bool queueFull = (queueDepth >= (STEP_QUEUE_SIZE - 1));
-        bool horizonReached = (m_lastFillStopReason.load() == static_cast<uint32_t>(FillStopReason::Horizon));
+        bool horizonReached = (lastStopReason == FillStopReason::Horizon);
 
         if (queueFull || horizonReached) {
             m_startupHoldoff = false;
@@ -530,9 +529,6 @@ void MotionPlanner::process() {
     uint32_t depth = static_cast<uint32_t>(queueDepth);
     if (m_minQueueDepth == 0xFFFFFFFFu || depth < m_minQueueDepth) {
         m_minQueueDepth = depth;
-    }
-    if (depth > m_maxQueueDepth) {
-        m_maxQueueDepth = depth;
     }
 
     // 2. Execution Completion Check
@@ -591,16 +587,15 @@ void MotionPlanner::process() {
     m_processProfiler.addSample(micros() - now);
 }
 
-void MotionPlanner::fillStepQueue(uint32_t horizonUs) {
+FillStopReason MotionPlanner::fillStepQueue(uint32_t horizonUs) {
     uint32_t startUs = micros();
     uint32_t now = startUs;
     static constexpr float SAMPLE_INTERVAL = STEP_TIMER_PERIOD_US / 1000000.0f;
-    m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::None));
+    FillStopReason reason = FillStopReason::None;
 
     while (m_genSegmentIdx != m_segmentHead) {
         if ((micros() - startUs) >= STEP_QUEUE_MAX_PROCESS_US) {
-            m_fillStopTimeBudgetCount.fetch_add(1);
-            m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::TimeBudget));
+            reason = FillStopReason::TimeBudget;
             break;
         }
         Segment& seg = m_segments[m_genSegmentIdx];
@@ -637,8 +632,7 @@ void MotionPlanner::fillStepQueue(uint32_t horizonUs) {
             if (blankTime > m_lastQueuedEventTime && getStepQueueSpace() > 0) {
                 queueStepEvent(blankTime, 0, 0);
             }
-            m_fillStopHorizonCount.fetch_add(1);
-            m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::Horizon));
+            reason = FillStopReason::Horizon;
             break;
         }
 
@@ -656,10 +650,9 @@ void MotionPlanner::fillStepQueue(uint32_t horizonUs) {
                 seg.lastGenTime = t;
                 seg.lastGenThetaSteps = lastThetaSteps;
                 seg.lastGenRhoSteps = lastRhoSteps;
-                m_fillStopTimeBudgetCount.fetch_add(1);
-                m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::TimeBudget));
+                reason = FillStopReason::TimeBudget;
                 m_genProfiler.addSample(micros() - startUs);
-                return;
+                return reason;
             }
             // Get position from S-curve profile (with time scaling)
             float thetaProfileTime = t / thetaTimeScale;
@@ -739,10 +732,9 @@ void MotionPlanner::fillStepQueue(uint32_t horizonUs) {
                         seg.lastGenTime = t;
                         seg.lastGenThetaSteps = lastThetaSteps;
                         seg.lastGenRhoSteps = lastRhoSteps;
-                        m_fillStopQueueFullCount.fetch_add(1);
-                        m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::QueueFull));
+                        reason = FillStopReason::QueueFull;
                         m_genProfiler.addSample(micros() - startUs);
-                        return;
+                        return reason;
                     }
                 }
             }
@@ -769,12 +761,12 @@ void MotionPlanner::fillStepQueue(uint32_t horizonUs) {
         if (blankTime > m_lastQueuedEventTime && getStepQueueSpace() > 0) {
             queueStepEvent(blankTime, 0, 0);
         }
-        m_fillStopHorizonCount.fetch_add(1);
-        m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::Horizon));
+        reason = FillStopReason::Horizon;
         break;
     }
 
     m_genProfiler.addSample(micros() - startUs);
+    return reason;
 }
 
 int MotionPlanner::getStepQueueSpace() const {
@@ -953,24 +945,14 @@ void MotionPlanner::getTelemetry(PlannerTelemetry& out) {
     if (queueDepth < 0) queueDepth = 0;
     out.queueDepth = static_cast<uint32_t>(queueDepth);
     out.minQueueDepth = (m_minQueueDepth == 0xFFFFFFFFu) ? out.queueDepth : m_minQueueDepth;
-    out.maxQueueDepth = m_maxQueueDepth;
     out.underruns = m_underrunCount.load();
-    out.consecutiveUnderruns = m_consecutiveUnderruns.load();
-    out.maxConsecutiveUnderruns = m_maxConsecutiveUnderruns.exchange(out.consecutiveUnderruns);
-    out.lastUnderrunUs = m_lastUnderrunUs.load();
-    out.segmentHead = static_cast<uint32_t>(m_segmentHead);
-    out.segmentTail = static_cast<uint32_t>(m_segmentTail);
-    out.genSegmentIdx = static_cast<uint32_t>(m_genSegmentIdx);
+    uint32_t currentConsecutive = m_consecutiveUnderruns.load();
+    out.maxConsecutiveUnderruns = m_maxConsecutiveUnderruns.exchange(currentConsecutive);
     out.completedCount = m_completedCount;
-    out.fillStopHorizon = m_fillStopHorizonCount.exchange(0);
-    out.fillStopQueueFull = m_fillStopQueueFullCount.exchange(0);
-    out.fillStopTimeBudget = m_fillStopTimeBudgetCount.exchange(0);
-    out.lastFillStopReason = m_lastFillStopReason.load();
     out.timerActive = m_timerActive;
     out.running = m_running;
 
     m_minQueueDepth = out.queueDepth;
-    m_maxQueueDepth = out.queueDepth;
 }
 
 int32_t MotionPlanner::thetaToSteps(float theta) const {
@@ -1001,7 +983,6 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
         if (m_running) {
             uint32_t now = micros();
             m_underrunCount++;
-            m_lastUnderrunUs.store(now);
             uint32_t consecutive = m_consecutiveUnderruns.fetch_add(1) + 1;
             uint32_t prevMax = m_maxConsecutiveUnderruns.load();
             while (consecutive > prevMax &&
