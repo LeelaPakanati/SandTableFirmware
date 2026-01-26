@@ -10,7 +10,7 @@
 #include <atomic>
 
 #ifndef NATIVE_BUILD
-#include "Config.h"
+#include <Config.h>
 #endif
 
 // Pin/address definitions (Config.h in firmware, defaults for native builds).

@@ -26,6 +26,9 @@ PolarControl::PolarControl() {
 PolarControl::~PolarControl() {
 }
 
+constexpr float PolarControl::R_MAX;
+constexpr float PolarControl::R_SENSE;
+
 static TMC2209::SerialAddress toSerialAddress(uint8_t address) {
     switch (address) {
         case 0:
@@ -561,6 +564,10 @@ bool PolarControl::processNextMove() {
 
         // Check if pattern is complete
         if (m_planner.isIdle()) {
+            if (m_state == PREPARING && m_fileLoading) {
+                xSemaphoreGive(m_mutex);
+                return false;
+            }
             if (m_state == CLEARING && m_clearingSpeedActive) {
                 m_clearingSpeedActive = false;
                 updateSpeedSettings();

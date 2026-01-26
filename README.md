@@ -23,7 +23,7 @@ At a high level the firmware is organized around three FreeRTOS tasks pinned acr
 
 ## Quick Start
 1. Open the project in PlatformIO.
-2. Adjust WiFi credentials in `src/Config.h` if desired.
+2. Adjust WiFi credentials in `lib/Config/src/Config.h` if desired.
 3. Build and flash:
    ```bash
    pio run -t upload
@@ -35,13 +35,13 @@ At a high level the firmware is organized around three FreeRTOS tasks pinned acr
 5. Connect to the device IP and open the Web UI.
 
 ## Configuration
-Key settings in `src/Config.h`:
+Key settings in `lib/Config/src/Config.h`:
 - WiFi AP fallback credentials
 - Static IP defaults (`100.76.149.200`)
 - OTA hostname/password
 - Task core affinity, stack sizes, and telemetry intervals
 
-Pin defaults live in `src/Config.h`:
+Pin defaults live in `lib/Config/src/Config.h`:
 - Rho Step: 33
 - Rho Dir: 25
 - Theta Step: 32

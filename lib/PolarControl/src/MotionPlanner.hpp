@@ -7,7 +7,7 @@
 
 #ifndef NATIVE_BUILD
 #include <Arduino.h>
-#include "Config.h"
+#include <Config.h>
 #endif
 
 // IRAM_ATTR is ESP32-specific; define as empty for native builds

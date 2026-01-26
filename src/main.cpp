@@ -10,7 +10,7 @@
 #include <SisyphusWebServer.hpp>
 #include <LEDController.hpp>
 
-#include "Config.h"
+#include <Config.h>
 
 PolarControl polarControl;
 SisyphusWebServer webServer(Config::kWebServerPort);
