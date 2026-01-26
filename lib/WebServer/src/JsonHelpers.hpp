@@ -7,7 +7,7 @@
 
 class JsonHelpers {
 public:
-    static void writeStatusJSON(Print& out, PolarControl* polarControl, LEDController* ledController, const String& currentPattern) {
+    static void writeStatusJSON(Print& out, PolarControl* polarControl, LEDController* ledController, const String& currentPattern, const String& clearingPattern) {
         String state = getStateString(polarControl->getState());
         int progress = polarControl->getProgressPercent();
         uint8_t brightness = ledController->getBrightness();
@@ -15,13 +15,18 @@ public:
         uint8_t speed = polarControl->getSpeed();
         uint32_t heap = ESP.getFreeHeap();
         uint32_t uptime = millis() / 1000;
+        int clearingProgress = (state == "CLEARING") ? progress : -1;
 
         out.print("{\"state\":\"");
         out.print(state);
         out.print("\",\"currentPattern\":\"");
         out.print(currentPattern);
+        out.print("\",\"clearingPattern\":\"");
+        out.print(clearingPattern);
         out.print("\",\"progress\":");
         out.print(progress);
+        out.print(",\"clearingProgress\":");
+        out.print(clearingProgress);
         out.print(",\"ledBrightness\":");
         out.print(brightnessPercent);
         out.print(",\"speed\":");

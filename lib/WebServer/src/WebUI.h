@@ -1576,10 +1576,12 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 stateBadge.className = 'status-badge status-' + status.state.toLowerCase();
 
                 const currentPattern = status.currentPattern || 'None';
+                const clearingPattern = status.clearingPattern || '';
                 const isClearing = status.state === 'CLEARING';
-                if (currentPattern !== this.lastPatternName) {
+                const displayPattern = (isClearing && clearingPattern) ? `Clearing: ${clearingPattern}` : currentPattern;
+                if (displayPattern !== this.lastPatternName) {
                     this.clearPath();
-                    this.lastPatternName = currentPattern;
+                    this.lastPatternName = displayPattern;
                     if (!isClearing) {
                         this.setOverlayImage(currentPattern);
                     }
@@ -1602,7 +1604,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     this.setOverlayImage(currentPattern);
                 }
 
-                document.getElementById('current-pattern').textContent = currentPattern.replace('.thr', '');
+                document.getElementById('current-pattern').textContent = displayPattern.replace('.thr', '');
                 document.getElementById('status-brightness').textContent = status.ledBrightness;
                 document.getElementById('uptime').textContent = this.formatUptime(status.uptime);
 
@@ -1619,7 +1621,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 }
 
                 // Update file progress bar
-                const progress = status.progress;
+                const progress = isClearing ? status.clearingProgress : status.progress;
                 const isRunning = status.state === 'RUNNING' || status.state === 'CLEARING';
                 const statusProgressContainer = document.getElementById('file-progress-container');
                 const statusProgressBar = document.getElementById('file-progress-bar');

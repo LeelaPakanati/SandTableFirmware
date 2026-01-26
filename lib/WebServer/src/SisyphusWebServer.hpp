@@ -38,6 +38,7 @@ private:
     bool m_runningClearing;       // True if currently running a clearing pattern
     bool m_firstPointCleared;     // True if we've cleared the lead-in path
     String m_pendingPattern;      // Pattern to run after clearing completes
+    ClearingPattern m_activeClearingPattern;
 
     // File upload handling
     File m_uploadFile;

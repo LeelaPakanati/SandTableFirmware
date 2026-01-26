@@ -67,6 +67,19 @@ static String resolvePatternPath(const String& filename) {
 
 static constexpr bool kEnablePatternImages = true;
 
+static const char* getClearingPatternName(ClearingPattern pattern) {
+    switch (pattern) {
+        case SPIRAL_OUTWARD: return "Spiral Outward";
+        case SPIRAL_INWARD: return "Spiral Inward";
+        case CONCENTRIC_CIRCLES: return "Concentric Circles";
+        case ZIGZAG_RADIAL: return "Zigzag Radial";
+        case PETAL_FLOWER: return "Petal Flower";
+        case CLEARING_NONE: return "";
+        case CLEARING_RANDOM: return "Random";
+        default: return "";
+    }
+}
+
 SisyphusWebServer::SisyphusWebServer(uint16_t port)
     : m_server(port),
       m_events("/api/stream"),
@@ -78,6 +91,7 @@ SisyphusWebServer::SisyphusWebServer(uint16_t port)
       m_playlistMode(false),
       m_runningClearing(false),
       m_firstPointCleared(false),
+      m_activeClearingPattern(CLEARING_NONE),
       m_lastUploadTime(0),
       m_fileListDirty(true) {
     m_cacheMutex = xSemaphoreCreateMutex();
@@ -674,6 +688,7 @@ void SisyphusWebServer::processPatternQueue() {
         m_pendingPattern = "";
         m_runningClearing = false;
         m_singlePatternClearing = false;
+        m_activeClearingPattern = CLEARING_NONE;
         return;
     }
 
@@ -694,9 +709,12 @@ void SisyphusWebServer::processPatternQueue() {
             if (!m_polarControl->startClearing(std_patch::make_unique<ClearingPatternGen>(pattern, m_polarControl->getMaxRho()))) {
                 m_runningClearing = false;
                 m_singlePatternClearing = false;
+                m_activeClearingPattern = CLEARING_NONE;
                 m_polarControl->loadAndRunFile(resolvePatternPath(m_pendingPattern));
                 m_currentPattern = m_pendingPattern;
                 m_pendingPattern = "";
+            } else {
+                m_activeClearingPattern = pattern;
             }
             return;
         }
@@ -720,6 +738,7 @@ void SisyphusWebServer::processPatternQueue() {
             m_polarControl->loadAndRunFile(resolvePatternPath(m_pendingPattern));
             m_pendingPattern = "";
             m_runningClearing = false;
+            m_activeClearingPattern = CLEARING_NONE;
             return;
         }
 
@@ -736,7 +755,10 @@ void SisyphusWebServer::processPatternQueue() {
                     
                     if (!m_polarControl->startClearing(std_patch::make_unique<ClearingPatternGen>(pattern, m_polarControl->getMaxRho()))) {
                         m_runningClearing = false;
+                        m_activeClearingPattern = CLEARING_NONE;
                         m_polarControl->loadAndRunFile(resolvePatternPath(next.filename));
+                    } else {
+                        m_activeClearingPattern = pattern;
                     }
                 } else {
                     LOG("Playlist: Starting pattern: %s\r\n", next.filename.c_str());
@@ -751,6 +773,7 @@ void SisyphusWebServer::processPatternQueue() {
             m_playlistMode = false;
             m_runningClearing = false;
             m_pendingPattern = "";
+            m_activeClearingPattern = CLEARING_NONE;
         }
     }
 }
@@ -760,7 +783,11 @@ String SisyphusWebServer::getStateString() {
 }
 
 void SisyphusWebServer::writeStatusJSON(Print& out) {
-    JsonHelpers::writeStatusJSON(out, m_polarControl, m_ledController, m_currentPattern);
+    String clearingPattern = "";
+    if (m_polarControl->getState() == PolarControl::CLEARING) {
+        clearingPattern = getClearingPatternName(m_activeClearingPattern);
+    }
+    JsonHelpers::writeStatusJSON(out, m_polarControl, m_ledController, m_currentPattern, clearingPattern);
 }
 
 void SisyphusWebServer::writeFileListJSON(Print& out) {
@@ -865,6 +892,7 @@ void SisyphusWebServer::handlePatternStop(AsyncWebServerRequest *request) {
     m_pendingPattern = "";
     m_runningClearing = false;
     m_singlePatternClearing = false;
+    m_activeClearingPattern = CLEARING_NONE;
 
     if (success) {
         request->send(200, "application/json", "{\"success\":true}");
