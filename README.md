@@ -93,10 +93,6 @@ pio run -e native
 ./run_all_tests.sh
 ```
 
-## Security and Operational Notes
-- Web endpoints are unauthenticated and CORS is open. Use trusted networks.
-- WiFi and OTA credentials are hard-coded by default; update before deployment.
-
 ## Directory Map
 ```
 /        - firmware root
