@@ -45,7 +45,7 @@ void motorTask(void *parameter) {
             polarControl.getMutexWaitProfile(maxMutexWait, avgMutexWait);
 
             if (state == PolarControl::RUNNING || state == PolarControl::CLEARING || state == PolarControl::PREPARING) {
-                LOG("[MOTOR Core%d] Pos: ρ=%.0f θ=%.0f° | Q: %u | UR: %u | Loop: %.0f/s | MaxProc: %uus | MaxInt: %uus | AvgGen: %uus | MutexW max/avg: %u/%u | FillStop H/Q/T: %u/%u/%u | LastStop: %u\r\n",
+                LOG("[MOTOR Core%d] Pos: ρ=%.0f θ=%.0f° | Q: %u | UR: %u | Loop: %.0f/s | MaxProc: %uus | MaxInt: %uus | AvgGen: %uus | MutexW max/avg: %u/%u\r\n",
                               xPortGetCoreID(),
                               pos.rho,
                               pos.theta * 180.0 / PI,
@@ -56,45 +56,32 @@ void motorTask(void *parameter) {
                               maxInt,
                               avgGen,
                               maxMutexWait,
-                              avgMutexWait,
-                              telemetry.fillStopHorizon,
-                              telemetry.fillStopQueueFull,
-                              telemetry.fillStopTimeBudget,
-                              telemetry.lastFillStopReason);
+                              avgMutexWait);
             }
 
             if (telemetry.underruns > lastUnderruns) {
                 uint32_t delta = telemetry.underruns - lastUnderruns;
-                uint32_t nowUs = micros();
-                uint32_t sinceLastUs = telemetry.lastUnderrunUs ? (nowUs - telemetry.lastUnderrunUs) : 0;
                 uint32_t coordDepth = polarControl.getCoordQueueDepth();
                 uint32_t lastFileLine = polarControl.getLastFileLine();
-                LOG("[MOTOR Core%d] Underrun burst +%u | Q cur/min/max: %u/%u/%u | consec: %u max: %u | last: %uus ago | seg H/T/G: %u/%u/%u | timer:%u running:%u\r\n",
+                LOG("[MOTOR Core%d] Underrun burst +%u | Q cur/min: %u/%u | maxConsec: %u | coordQ: %u | timer:%u running:%u\r\n",
                     xPortGetCoreID(),
                     delta,
                     telemetry.queueDepth,
                     telemetry.minQueueDepth,
-                    telemetry.maxQueueDepth,
-                    telemetry.consecutiveUnderruns,
                     telemetry.maxConsecutiveUnderruns,
-                    sinceLastUs,
-                    telemetry.segmentHead,
-                    telemetry.segmentTail,
-                    telemetry.genSegmentIdx,
+                    coordDepth,
                     telemetry.timerActive ? 1 : 0,
                     telemetry.running ? 1 : 0);
                 char context[160];
                 snprintf(context, sizeof(context),
-                         "delta=%u q=%u min=%u max=%u consec=%u maxConsec=%u lastUs=%u coordQ=%u",
-                         delta, telemetry.queueDepth, telemetry.minQueueDepth, telemetry.maxQueueDepth,
-                         telemetry.consecutiveUnderruns, telemetry.maxConsecutiveUnderruns,
-                         sinceLastUs, coordDepth);
+                         "delta=%u q=%u min=%u maxConsec=%u coordQ=%u",
+                         delta, telemetry.queueDepth, telemetry.minQueueDepth,
+                         telemetry.maxConsecutiveUnderruns, coordDepth);
                 ErrorLog::instance().log("ERROR", "MOTION", "QUEUE_UNDERRUN",
                                          "Queue underrun burst", context);
-                LOG("[MOTOR Core%d] Underrun context | segCompleted: %u | coordQ: %u | fileLine: %u\r\n",
+                LOG("[MOTOR Core%d] Underrun context | segCompleted: %u | fileLine: %u\r\n",
                     xPortGetCoreID(),
                     telemetry.completedCount,
-                    coordDepth,
                     lastFileLine);
             }
 
