@@ -510,7 +510,12 @@ void PolarControl::feedPlanner() {
             m_planner.addSegment(next.theta, next.rho);
             addedAny = true;
         }
-        if (addedAny) m_planner.recalculate();
+        if (addedAny) {
+            m_planner.recalculate();
+            if (!m_planner.isRunning()) {
+                m_planner.start();
+            }
+        }
         return;
     }
 
@@ -543,6 +548,9 @@ void PolarControl::feedPlanner() {
     }
     if (addedAny) {
         m_planner.recalculate();
+        if (!m_planner.isRunning()) {
+            m_planner.start();
+        }
     }
 }
 
