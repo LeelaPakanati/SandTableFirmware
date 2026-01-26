@@ -12,7 +12,7 @@ ESP32 firmware for a Sisyphus-style polar-coordinate sand table. It drives Theta
 ## Architecture
 At a high level the firmware is organized around three FreeRTOS tasks pinned across the two ESP32 cores. `src/main.cpp` creates a MotorTask on Core 1 for deterministic step generation, and a WebTask on Core 0 for the Web UI/API, WiFi, and OTA handling. `lib/PolarControl` owns the motion planner, driver configuration, and the inter-task queues. It also spins up a FileReadTask on Core 0 to stream `.thr` pattern points from SD/LittleFS into a coordinate queue. The MotorTask drains that queue and drives the stepper outputs, while the WebTask sends commands (start/stop/speed/tuning) and exposes telemetry back to the UI via SSE and JSON APIs.
 
-![Architecture diagram](docs/images/architecture-tasks.svg)
+![Architecture diagram](docs/images/architecture-tasks-dark.svg)
 
 ## Hardware
 - ESP32 dev board
@@ -49,6 +49,8 @@ Pin defaults live in `lib/PolarControl/src/PolarControl.hpp`:
 - UART TX: 26
 
 ## Web UI and API
+![Web UI screenshot](docs/images/webserver-screenshot.png)
+
 Core endpoints (see `lib/WebServer/src/SisyphusWebServer.cpp`):
 - `GET /` UI
 - `GET /api/status` current state and telemetry
