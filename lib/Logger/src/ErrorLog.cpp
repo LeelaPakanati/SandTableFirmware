@@ -105,19 +105,32 @@ void ErrorLog::writeJson(Print& out) const {
 }
 #else
 void ErrorLog::writeJson(Print& out) const {
-    lock();
-    out.print("{\"count\":");
-    out.print(static_cast<uint32_t>(m_size));
-    out.print(",\"total\":");
-    out.print(m_total);
-    out.print(",\"dropped\":");
-    out.print(m_dropped);
-    out.print(",\"errors\":[");
+    Entry entries[kMaxEntries];
+    size_t size = 0;
+    uint32_t total = 0;
+    uint32_t dropped = 0;
 
+    lock();
+    size = m_size;
+    total = m_total;
+    dropped = m_dropped;
     size_t start = (m_head + kMaxEntries - m_size) % kMaxEntries;
     for (size_t i = 0; i < m_size; ++i) {
         size_t idx = (start + i) % kMaxEntries;
-        const Entry& entry = m_entries[idx];
+        entries[i] = m_entries[idx];
+    }
+    unlock();
+
+    out.print("{\"count\":");
+    out.print(static_cast<uint32_t>(size));
+    out.print(",\"total\":");
+    out.print(total);
+    out.print(",\"dropped\":");
+    out.print(dropped);
+    out.print(",\"errors\":[");
+
+    for (size_t i = 0; i < size; ++i) {
+        const Entry& entry = entries[i];
         if (i > 0) out.print(',');
         out.print("{\"id\":");
         out.print(entry.id);
@@ -136,6 +149,5 @@ void ErrorLog::writeJson(Print& out) const {
         out.print('}');
     }
     out.print("]}");
-    unlock();
 }
 #endif

@@ -9,8 +9,53 @@
 #include <SDCard.hpp>
 #include <ClearingPatternGen.hpp>
 #include <ErrorLog.hpp>
+#include <algorithm>
 
 static constexpr size_t kResponseBufferSize = 256;
+static constexpr unsigned long kStatusCacheMs = 300;
+static constexpr unsigned long kErrorsCacheMs = 1000;
+static constexpr unsigned long kFileCacheThrottleMs = 500;
+
+class StringPrint : public Print {
+public:
+    explicit StringPrint(String& out) : m_out(out) {}
+
+    size_t write(uint8_t c) override {
+        m_out += static_cast<char>(c);
+        return 1;
+    }
+
+    size_t write(const uint8_t* buffer, size_t size) override {
+        m_out.reserve(m_out.length() + size);
+        for (size_t i = 0; i < size; ++i) {
+            m_out += static_cast<char>(buffer[i]);
+        }
+        return size;
+    }
+
+private:
+    String& m_out;
+};
+
+static void writeJsonString(Print& out, const String& value) {
+    out.print('"');
+    for (size_t i = 0; i < value.length(); ++i) {
+        char c = value.charAt(i);
+        if (c == '"' || c == '\\') {
+            out.print('\\');
+            out.print(c);
+        } else if (c == '\n') {
+            out.print("\\n");
+        } else if (c == '\r') {
+            out.print("\\r");
+        } else if (c == '\t') {
+            out.print("\\t");
+        } else {
+            out.print(c);
+        }
+    }
+    out.print('"');
+}
 
 // Helper to resolve pattern file path
 static String resolvePatternPath(const String& filename) {
@@ -60,7 +105,6 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
-    DefaultHeaders::Instance().addHeader("Connection", "close");
 
     // Handle OPTIONS requests (preflight)
     m_server.onNotFound([](AsyncWebServerRequest *request) {
@@ -159,34 +203,40 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
             bool found = false;
             time_t imgTime = 0;
             String pngPath;
-            
-            // Acquire lock briefly to look up file
+
             if (m_cacheMutex) {
                 xSemaphoreTake(m_cacheMutex, portMAX_DELAY);
-                for (const auto& entry : m_fileCache) {
-                    // Entry name includes extension .thr
-                    String entryBase = entry.name;
-                    if (entryBase.endsWith(".thr")) entryBase = entryBase.substring(0, entryBase.length() - 4);
-                    
-                    if (entryBase == file) {
-                        if (entry.hasImage) {
-                            found = true;
-                            imgTime = entry.imageTime;
-                            
-                            // Reconstruct path based on directory structure flag
-                            if (entry.isDirectory) {
-                                pngPath = "/patterns/" + file + "/" + file + ".png";
-                            } else {
-                                pngPath = "/patterns/" + file + ".png";
-                            }
-                        }
-                        break;
-                    }
+                const FileEntry* entry = findFileEntryByBase(file);
+                if (entry && entry->hasImage && entry->pngPath.length() > 0) {
+                    found = true;
+                    imgTime = entry->imageTime;
+                    pngPath = entry->pngPath;
                 }
                 xSemaphoreGive(m_cacheMutex);
             }
 
+            if (!found) {
+                if (m_fileListDirty) {
+                    AsyncWebServerResponse *response = request->beginResponse(503);
+                    response->addHeader("Retry-After", "1");
+                    request->send(response);
+                } else {
+                    m_fileListDirty = true;
+                    request->send(404);
+                }
+                return;
+            }
+
             if (found) {
+                if (imgTime > 0 && request->hasHeader("If-Modified-Since")) {
+                    char timeStr[32];
+                    struct tm * tmstruct = gmtime((time_t*)&imgTime);
+                    strftime(timeStr, sizeof(timeStr), "%a, %d %b %Y %H:%M:%S GMT", tmstruct);
+                    if (request->getHeader("If-Modified-Since")->value() == timeStr) {
+                        request->send(304);
+                        return;
+                    }
+                }
                 AsyncWebServerResponse *response = request->beginResponse(SD, pngPath, "image/png");
                 response->addHeader("Cache-Control", "public, max-age=31536000, immutable");
                 
@@ -405,6 +455,7 @@ void SisyphusWebServer::updateFileListCache() {
     Serial.println("Updating file list cache in memory...");
     
     std::vector<FileEntry> newCache;
+    std::vector<FileIndexEntry> newIndex;
     
     File root = SD.open("/patterns");
     if (!root) {
@@ -441,10 +492,29 @@ void SisyphusWebServer::updateFileListCache() {
                         }
                     }
                     
-                    newCache.push_back({patternFile, innerFile.size(), innerFile.getLastWrite(), hasImg, imgTime, true});
+                    FileEntry entry{patternFile, name, innerFile.size(), innerFile.getLastWrite(),
+                                    hasImg, imgTime, true, hasImg ? pngPath : ""};
+                    newIndex.push_back({entry.baseName, newCache.size()});
+                    newCache.push_back(entry);
                     innerFile.close();
                 }
             }
+        } else if (name.endsWith(".thr")) {
+            String baseName = name.substring(0, name.length() - 4);
+            String pngPath = "/patterns/" + baseName + ".png";
+            bool hasImg = SD.exists(pngPath);
+            time_t imgTime = 0;
+            if (hasImg) {
+                File img = SD.open(pngPath);
+                if (img) {
+                    imgTime = img.getLastWrite();
+                    img.close();
+                }
+            }
+            FileEntry entry{name, baseName, file.size(), file.getLastWrite(),
+                            hasImg, imgTime, false, hasImg ? pngPath : ""};
+            newIndex.push_back({entry.baseName, newCache.size()});
+            newCache.push_back(entry);
         }
         file.close();
         file = root.openNextFile();
@@ -454,15 +524,41 @@ void SisyphusWebServer::updateFileListCache() {
     if (m_cacheMutex) {
         xSemaphoreTake(m_cacheMutex, portMAX_DELAY);
         m_fileCache = std::move(newCache);
+        m_fileIndex = std::move(newIndex);
+        std::sort(m_fileIndex.begin(), m_fileIndex.end(),
+                  [](const FileIndexEntry& a, const FileIndexEntry& b) {
+                      return a.baseName.compareTo(b.baseName) < 0;
+                  });
         xSemaphoreGive(m_cacheMutex);
     }
     
     m_fileListDirty = false;
+    m_lastFileCacheUpdate = millis();
     Serial.printf("File list cache updated: %u files\n", m_fileCache.size());
 }
 
+const SisyphusWebServer::FileEntry* SisyphusWebServer::findFileEntryByBase(const String& baseName) const {
+    if (m_fileIndex.empty()) return nullptr;
+
+    size_t left = 0;
+    size_t right = m_fileIndex.size();
+    while (left < right) {
+        size_t mid = left + (right - left) / 2;
+        int cmp = baseName.compareTo(m_fileIndex[mid].baseName);
+        if (cmp == 0) {
+            return &m_fileCache[m_fileIndex[mid].index];
+        }
+        if (cmp < 0) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    return nullptr;
+}
+
 void SisyphusWebServer::loop() {
-    if (m_fileListDirty) {
+    if (m_fileListDirty && (millis() - m_lastFileCacheUpdate) >= kFileCacheThrottleMs) {
         updateFileListCache();
     }
     processPatternQueue();
@@ -665,15 +761,47 @@ void SisyphusWebServer::handleRoot(AsyncWebServerRequest *request) {
 }
 
 void SisyphusWebServer::handleStatus(AsyncWebServerRequest *request) {
-    AsyncResponseStream *response = request->beginResponseStream("application/json", kResponseBufferSize);
-    writeStatusJSON(*response);
-    request->send(response);
+    auto state = m_polarControl->getState();
+    int progress = m_polarControl->getProgressPercent();
+    unsigned long now = millis();
+    bool stateChanged = (static_cast<uint8_t>(state) != m_lastStatusState) || (progress != m_lastStatusProgress);
+
+    if (!stateChanged && m_statusCache.length() > 0 && (now - m_statusCacheAt) < kStatusCacheMs) {
+        request->send(200, "application/json", m_statusCache);
+        return;
+    }
+
+    m_lastStatusState = static_cast<uint8_t>(state);
+    m_lastStatusProgress = progress;
+    m_statusCache = "";
+    m_statusCache.reserve(kResponseBufferSize);
+    StringPrint printer(m_statusCache);
+    writeStatusJSON(printer);
+    m_statusCacheAt = now;
+    request->send(200, "application/json", m_statusCache);
 }
 
 void SisyphusWebServer::handleErrors(AsyncWebServerRequest *request) {
-    AsyncResponseStream *response = request->beginResponseStream("application/json", 1024);
-    ErrorLog::instance().writeJson(*response);
-    request->send(response);
+    uint32_t total = ErrorLog::instance().totalCount();
+    uint32_t dropped = ErrorLog::instance().droppedCount();
+    uint32_t size = ErrorLog::instance().size();
+    unsigned long now = millis();
+    bool changed = (total != m_errorsTotal) || (dropped != m_errorsDropped) || (size != m_errorsSize);
+
+    if (!changed && m_errorsCache.length() > 0 && (now - m_errorsCacheAt) < kErrorsCacheMs) {
+        request->send(200, "application/json", m_errorsCache);
+        return;
+    }
+
+    m_errorsTotal = total;
+    m_errorsDropped = dropped;
+    m_errorsSize = size;
+    m_errorsCache = "";
+    m_errorsCache.reserve(1024);
+    StringPrint printer(m_errorsCache);
+    ErrorLog::instance().writeJson(printer);
+    m_errorsCacheAt = now;
+    request->send(200, "application/json", m_errorsCache);
 }
 
 void SisyphusWebServer::handlePatternStart(AsyncWebServerRequest *request) {
@@ -790,8 +918,9 @@ void SisyphusWebServer::handleFileList(AsyncWebServerRequest *request) {
         for (size_t i = 0; i < m_fileCache.size(); i++) {
             if (i > 0) response->print(",");
             // Manual JSON construction for efficiency
-            response->printf("{\"name\":\"%s\",\"size\":%u,\"time\":%u}", 
-                m_fileCache[i].name.c_str(), m_fileCache[i].size, m_fileCache[i].time);
+            response->printf("{\"name\":\"%s\",\"size\":%u,\"time\":%u,\"hasImage\":%s,\"imageTime\":%u}", 
+                m_fileCache[i].name.c_str(), m_fileCache[i].size, m_fileCache[i].time,
+                m_fileCache[i].hasImage ? "true" : "false", m_fileCache[i].imageTime);
         }
         xSemaphoreGive(m_cacheMutex);
     }
@@ -1080,10 +1209,10 @@ void SisyphusWebServer::handlePlaylistGet(AsyncWebServerRequest *request) {
     bool first = true;
     for (int i = 0; i < m_playlist.count(); i++) {
         const PlaylistItem& item = m_playlist.getItem(i);
-        JsonDocument entry;
-        entry["filename"] = item.filename;
         if (!first) response->print(',');
-        serializeJson(entry, *response);
+        response->print("{\"filename\":");
+        writeJsonString(*response, item.filename);
+        response->print('}');
         first = false;
     }
 
@@ -1197,10 +1326,8 @@ void SisyphusWebServer::handlePlaylistList(AsyncWebServerRequest *request) {
                 if (filename.endsWith(".json")) {
                     // Remove .json extension
                     filename = filename.substring(0, filename.length() - 5);
-                    JsonDocument entry;
-                    entry.set(filename);
                     if (!first) response->print(',');
-                    serializeJson(entry, *response);
+                    writeJsonString(*response, filename);
                     first = false;
                 }
             }

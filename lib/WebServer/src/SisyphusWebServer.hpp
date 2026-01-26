@@ -102,6 +102,7 @@ private:
     void noteRequest(AsyncWebServerRequest *request);
     
     void updateFileListCache();
+    const FileEntry* findFileEntryByBase(const String& baseName) const;
 
     unsigned long m_lastPosBroadcast = 0; // Timer for position streaming
     float m_lastBroadcastX = -1.0f;
@@ -113,12 +114,31 @@ private:
 
     struct FileEntry {
         String name;
+        String baseName;
         size_t size;
         time_t time;
         bool hasImage;
         time_t imageTime;
         bool isDirectory;
+        String pngPath;
+    };
+    struct FileIndexEntry {
+        String baseName;
+        size_t index;
     };
     std::vector<FileEntry> m_fileCache;
+    std::vector<FileIndexEntry> m_fileIndex;
     SemaphoreHandle_t m_cacheMutex = nullptr;
+    unsigned long m_lastFileCacheUpdate = 0;
+
+    String m_statusCache;
+    unsigned long m_statusCacheAt = 0;
+    uint8_t m_lastStatusState = 0;
+    int m_lastStatusProgress = -1;
+
+    String m_errorsCache;
+    unsigned long m_errorsCacheAt = 0;
+    uint32_t m_errorsTotal = 0;
+    uint32_t m_errorsDropped = 0;
+    uint32_t m_errorsSize = 0;
 };
