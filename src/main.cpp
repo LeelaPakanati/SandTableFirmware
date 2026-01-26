@@ -10,21 +10,11 @@
 #include <SisyphusWebServer.hpp>
 #include <LEDController.hpp>
 
-#define AP_SSID "SisyphusTable"
-#define AP_PWD "sandpatterns"
-
-#define MOTOR_CORE 1
-#define WEB_CORE 0
-
-// Static IP configuration
-#define STATIC_IP_BASE IPAddress(100, 76, 149, 200)
-#define STATIC_GATEWAY IPAddress(100, 76, 149, 1)
-#define STATIC_SUBNET IPAddress(255, 255, 255, 0)
-#define STATIC_DNS IPAddress(100, 76, 149, 1)
+#include "Config.h"
 
 PolarControl polarControl;
-SisyphusWebServer webServer(80);
-LEDController ledController(2);
+SisyphusWebServer webServer(Config::kWebServerPort);
+LEDController ledController(Config::kLedCount);
 
 TaskHandle_t motorTaskHandle = NULL;
 TaskHandle_t webTaskHandle = NULL;
@@ -192,16 +182,16 @@ void setup() {
     LOG("Setting up WiFi...\r\n");
     WiFi.mode(WIFI_STA);
     WiFiManager wm;
-    wm.setConfigPortalTimeout(180);
+    wm.setConfigPortalTimeout(Config::kWifiPortalTimeoutSec);
 
     // Configure static IP
-    wm.setSTAStaticIPConfig(STATIC_IP_BASE, STATIC_GATEWAY, STATIC_SUBNET, STATIC_DNS);
-    LOG("Requesting static IP: %s\r\n", STATIC_IP_BASE.toString().c_str());
+    wm.setSTAStaticIPConfig(Config::kStaticIpBase, Config::kStaticGateway, Config::kStaticSubnet, Config::kStaticDns);
+    LOG("Requesting static IP: %s\r\n", Config::kStaticIpBase.toString().c_str());
 
-    if (!wm.autoConnect(AP_SSID, AP_PWD)) {
+    if (!wm.autoConnect(Config::kApSsid, Config::kApPassword)) {
         LOG("Failed to connect to WiFi\r\n");
         ErrorLog::instance().log("ERROR", "WIFI", "CONNECT_FAILED",
-                                 "Failed to connect to WiFi", AP_SSID);
+                                 "Failed to connect to WiFi", Config::kApSsid);
         ESP.restart();
     }
 
@@ -210,8 +200,8 @@ void setup() {
     LOG("SSID: %s\r\n", WiFi.SSID().c_str());
 
     // Setup OTA updates
-    ArduinoOTA.setHostname("sisyphus");
-    ArduinoOTA.setPassword("sandpatterns");
+    ArduinoOTA.setHostname(Config::kOtaHostname);
+    ArduinoOTA.setPassword(Config::kOtaPassword);
     ArduinoOTA.onStart([]() {
         String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
         LOG("OTA Start: %s\r\n", type.c_str());
@@ -273,7 +263,7 @@ void setup() {
         NULL,
         1,
         &motorTaskHandle,
-        MOTOR_CORE
+        Config::kMotorCore
     );
 
     // Create web logic task on Core 0
@@ -285,7 +275,7 @@ void setup() {
         NULL,
         1,
         &webTaskHandle,
-        WEB_CORE
+        Config::kWebCore
     );
 
     // Initial speed

@@ -26,6 +26,21 @@ PolarControl::PolarControl() {
 PolarControl::~PolarControl() {
 }
 
+static TMC2209::SerialAddress toSerialAddress(uint8_t address) {
+    switch (address) {
+        case 0:
+            return TMC2209::SERIAL_ADDRESS_0;
+        case 1:
+            return TMC2209::SERIAL_ADDRESS_1;
+        case 2:
+            return TMC2209::SERIAL_ADDRESS_2;
+        case 3:
+            return TMC2209::SERIAL_ADDRESS_3;
+        default:
+            return TMC2209::SERIAL_ADDRESS_0;
+    }
+}
+
 // ============================================================================
 // Lifecycle
 // ============================================================================
@@ -40,9 +55,9 @@ void PolarControl::begin() {
 
     // Setup TMC2209 drivers with serial connection
     // Using ESP32 variant of setup() with alternate pins
-    m_tDriver.setup(Serial1, 115200, TMC2209::SERIAL_ADDRESS_2, RX_PIN, TX_PIN);
-    m_rDriver.setup(Serial1, 115200, TMC2209::SERIAL_ADDRESS_1, RX_PIN, TX_PIN);
-    m_rCDriver.setup(Serial1, 115200, TMC2209::SERIAL_ADDRESS_0, RX_PIN, TX_PIN);
+    m_tDriver.setup(Serial1, 115200, toSerialAddress(T_ADDR), RX_PIN, TX_PIN);
+    m_rDriver.setup(Serial1, 115200, toSerialAddress(R_ADDR), RX_PIN, TX_PIN);
+    m_rCDriver.setup(Serial1, 115200, toSerialAddress(RC_ADDR), RX_PIN, TX_PIN);
 
     delay(100);  // Allow drivers to initialize
 

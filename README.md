@@ -23,7 +23,7 @@ At a high level the firmware is organized around three FreeRTOS tasks pinned acr
 
 ## Quick Start
 1. Open the project in PlatformIO.
-2. Adjust WiFi credentials in `src/main.cpp` if desired.
+2. Adjust WiFi credentials in `src/Config.h` if desired.
 3. Build and flash:
    ```bash
    pio run -t upload
@@ -35,18 +35,20 @@ At a high level the firmware is organized around three FreeRTOS tasks pinned acr
 5. Connect to the device IP and open the Web UI.
 
 ## Configuration
-Key settings in `src/main.cpp`:
-- `AP_SSID`, `AP_PWD`: WiFi AP fallback
+Key settings in `src/Config.h`:
+- WiFi AP fallback credentials
 - Static IP defaults (`100.76.149.200`)
 - OTA hostname/password
+- Task core affinity, stack sizes, and telemetry intervals
 
-Pin defaults live in `lib/PolarControl/src/PolarControl.hpp`:
+Pin defaults live in `src/Config.h`:
 - Rho Step: 33
 - Rho Dir: 25
 - Theta Step: 32
 - Theta Dir: 22
 - UART RX: 27
 - UART TX: 26
+- Driver UART addresses: 0/1/2
 
 ## Web UI and API
 ![Web UI screenshot](docs/images/webserver-screenshot.png)

@@ -9,7 +9,22 @@
 #include <memory>
 #include <atomic>
 
-// Pin definitions
+#ifndef NATIVE_BUILD
+#include "Config.h"
+#endif
+
+// Pin/address definitions (Config.h in firmware, defaults for native builds).
+#ifndef NATIVE_BUILD
+#define R_STEP_PIN Config::kRhoStepPin
+#define R_DIR_PIN Config::kRhoDirPin
+#define T_STEP_PIN Config::kThetaStepPin
+#define T_DIR_PIN Config::kThetaDirPin
+#define RX_PIN Config::kUartRxPin
+#define TX_PIN Config::kUartTxPin
+#define R_ADDR Config::kRhoDriverAddress
+#define RC_ADDR Config::kRhoCDriverAddress
+#define T_ADDR Config::kThetaDriverAddress
+#elif !defined(R_STEP_PIN)
 #define R_STEP_PIN 33
 #define R_DIR_PIN 25
 #define T_STEP_PIN 32
@@ -19,6 +34,7 @@
 #define R_ADDR 1
 #define RC_ADDR 0
 #define T_ADDR 2
+#endif
 
 // Tuning settings structures
 struct MotionSettings {

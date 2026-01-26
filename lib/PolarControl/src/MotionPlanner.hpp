@@ -7,6 +7,7 @@
 
 #ifndef NATIVE_BUILD
 #include <Arduino.h>
+#include "Config.h"
 #endif
 
 // IRAM_ATTR is ESP32-specific; define as empty for native builds
@@ -14,8 +15,13 @@
 #define IRAM_ATTR
 #endif
 
-// Pin definitions for step/dir
-#ifndef R_STEP_PIN
+// Pin definitions for step/dir (Config.h in firmware, defaults for native builds).
+#ifndef NATIVE_BUILD
+#define R_STEP_PIN Config::kRhoStepPin
+#define R_DIR_PIN Config::kRhoDirPin
+#define T_STEP_PIN Config::kThetaStepPin
+#define T_DIR_PIN Config::kThetaDirPin
+#elif !defined(R_STEP_PIN)
 #define R_STEP_PIN 33
 #define R_DIR_PIN 25
 #define T_STEP_PIN 32
