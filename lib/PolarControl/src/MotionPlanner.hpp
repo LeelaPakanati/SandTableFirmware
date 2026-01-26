@@ -24,10 +24,10 @@
 
 // Configuration constants
 static constexpr int SEGMENT_BUFFER_SIZE = 32;
-static constexpr int STEP_QUEUE_SIZE = 1024;
+static constexpr int STEP_QUEUE_SIZE = 512;
 static constexpr float MIN_SEGMENT_DURATION = 0.010f;  // 10ms minimum
-static constexpr uint32_t STEP_TIMER_PERIOD_US = 67;  // 15kHz ISR
-static constexpr uint32_t STEP_QUEUE_HORIZON_US = 1000000;  // 500ms lookahead
+static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
+static constexpr uint32_t STEP_QUEUE_HORIZON_US = 1000000;  // 1000ms lookahead
 static constexpr uint32_t STEP_QUEUE_MAX_PROCESS_US = 20000;
 
 enum class FillStopReason : uint32_t {
@@ -148,6 +148,9 @@ public:
 
     // Get current position in physical units
     void getCurrentPosition(float& theta, float& rho) const;
+
+    // Get current velocity in physical units (theta rad/s, rho mm/s)
+    void getCurrentVelocity(float& thetaVel, float& rhoVel) const;
 
     // Reset theta to zero (current position becomes new origin)
     void resetTheta();

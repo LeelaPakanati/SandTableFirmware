@@ -35,6 +35,11 @@ struct PolarCord_t {
     }
 };
 
+struct PolarVelocity_t {
+    float theta;
+    float rho;
+};
+
 struct CartesianCord_t {
     float x;
     float y;

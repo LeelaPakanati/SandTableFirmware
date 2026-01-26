@@ -798,6 +798,38 @@ void MotionPlanner::getCurrentPosition(float& theta, float& rho) const {
     rho = stepsToRho(m_executedRSteps);
 }
 
+void MotionPlanner::getCurrentVelocity(float& thetaVel, float& rhoVel) const {
+    thetaVel = 0.0f;
+    rhoVel = 0.0f;
+
+    if (!m_running || m_segmentHead == m_segmentTail) {
+        return;
+    }
+
+    const Segment& current = m_segments[m_segmentTail];
+    if (!current.executing || !current.calculated || current.duration <= 0.0001f) {
+        return;
+    }
+
+    uint32_t now = micros();
+    uint32_t diff = now - m_segmentStartTime;
+    float elapsed = diff / 1000000.0f;
+    if (elapsed < 0.0f) elapsed = 0.0f;
+    if (elapsed > current.duration) elapsed = current.duration;
+
+    if (current.theta.profile.totalDistance > 0.0f && current.theta.timeScale > 0.0f) {
+        float t = elapsed / current.theta.timeScale;
+        float v = SCurve::getVelocity(current.theta.profile, t) / current.theta.timeScale;
+        thetaVel = v * static_cast<float>(current.theta.direction);
+    }
+
+    if (current.rho.profile.totalDistance > 0.0f && current.rho.timeScale > 0.0f) {
+        float t = elapsed / current.rho.timeScale;
+        float v = SCurve::getVelocity(current.rho.profile, t) / current.rho.timeScale;
+        rhoVel = v * static_cast<float>(current.rho.direction);
+    }
+}
+
 void MotionPlanner::resetTheta() {
     // Reset theta to zero at current position
     m_executedTSteps = 0;

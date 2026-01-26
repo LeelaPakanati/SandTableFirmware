@@ -275,6 +275,9 @@ bool PolarControl::startClearing(std::unique_ptr<PosGen> posGen) {
         return false;
     }
 
+    m_clearingSpeedActive = true;
+    m_planner.setSpeedMultiplier(1.0f);
+
     LOG("Starting Clearing Pattern\r\n");
 
     m_posGen = std::move(posGen);
@@ -388,6 +391,11 @@ bool PolarControl::stop() {
 
         m_planner.stop();
 
+        if (m_state == CLEARING && m_clearingSpeedActive) {
+            m_clearingSpeedActive = false;
+            updateSpeedSettings();
+        }
+
         m_state = IDLE;
         LOG("Stopped\r\n");
 
@@ -401,7 +409,9 @@ bool PolarControl::stop() {
 void PolarControl::setSpeed(uint8_t speed) {
     xSemaphoreTake(m_mutex, portMAX_DELAY);
     m_speed = speed;
-    updateSpeedSettings();
+    if (!m_clearingSpeedActive) {
+        updateSpeedSettings();
+    }
     xSemaphoreGive(m_mutex);
 }
 
@@ -424,6 +434,12 @@ PolarCord_t PolarControl::getActualPosition() {
     float theta, rho;
     m_planner.getCurrentPosition(theta, rho);
     return {theta, rho};
+}
+
+PolarVelocity_t PolarControl::getActualVelocity() {
+    float thetaVel, rhoVel;
+    m_planner.getCurrentVelocity(thetaVel, rhoVel);
+    return {thetaVel, rhoVel};
 }
 
 int PolarControl::getProgressPercent() const {
@@ -530,6 +546,10 @@ bool PolarControl::processNextMove() {
 
         // Check if pattern is complete
         if (m_planner.isIdle()) {
+            if (m_state == CLEARING && m_clearingSpeedActive) {
+                m_clearingSpeedActive = false;
+                updateSpeedSettings();
+            }
             m_posGen.reset();
             m_state = IDLE;
             LOG("Pattern Complete (idle state detected in processNextMove)\r\n");

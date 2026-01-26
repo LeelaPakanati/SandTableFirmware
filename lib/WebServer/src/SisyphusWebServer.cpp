@@ -10,6 +10,7 @@
 #include <ClearingPatternGen.hpp>
 #include <ErrorLog.hpp>
 #include <algorithm>
+#include <cmath>
 
 static constexpr size_t kResponseBufferSize = 256;
 static constexpr unsigned long kStatusCacheMs = 300;
@@ -568,15 +569,23 @@ void SisyphusWebServer::loop() {
 void SisyphusWebServer::broadcastSinglePosition(AsyncEventSourceClient *client) {
     // Get actual position (thread-safe now)
     PolarCord_t actualPos = m_polarControl->getActualPosition();
+    PolarVelocity_t actualVel = m_polarControl->getActualVelocity();
     float maxRho = m_polarControl->getMaxRho();
 
     // Convert to normalized Cartesian coordinates (0-1 range)
     CartesianCord_t norm = PolarUtils::toNormalizedCartesian(actualPos, maxRho);
 
     // Create compact JSON manually to save heap
-    char buffer[128];
-    snprintf(buffer, sizeof(buffer), "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f}", 
-             norm.x, norm.y, actualPos.rho, actualPos.theta);
+    float cosT = cosf(actualPos.theta);
+    float sinT = sinf(actualPos.theta);
+    float cartVelX = actualVel.rho * cosT - actualPos.rho * sinT * actualVel.theta;
+    float cartVelY = actualVel.rho * sinT + actualPos.rho * cosT * actualVel.theta;
+    float cartVel = sqrtf(cartVelX * cartVelX + cartVelY * cartVelY);
+
+    char buffer[196];
+    snprintf(buffer, sizeof(buffer),
+             "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f,\"vr\":%.2f,\"vt\":%.3f,\"vc\":%.2f}", 
+             norm.x, norm.y, actualPos.rho, actualPos.theta, actualVel.rho, actualVel.theta, cartVel);
 
     try {
         if (client) {
@@ -627,9 +636,17 @@ void SisyphusWebServer::broadcastPosition() {
     }
 
     if (shouldClear) {
-        char buffer[128];
-        snprintf(buffer, sizeof(buffer), "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f,\"clear\":1}", 
-                 norm.x, norm.y, actualPos.rho, actualPos.theta);
+        PolarVelocity_t actualVel = m_polarControl->getActualVelocity();
+        float cosT = cosf(actualPos.theta);
+        float sinT = sinf(actualPos.theta);
+        float cartVelX = actualVel.rho * cosT - actualPos.rho * sinT * actualVel.theta;
+        float cartVelY = actualVel.rho * sinT + actualPos.rho * cosT * actualVel.theta;
+        float cartVel = sqrtf(cartVelX * cartVelX + cartVelY * cartVelY);
+
+        char buffer[196];
+        snprintf(buffer, sizeof(buffer),
+                 "{\"x\":%.4f,\"y\":%.4f,\"r\":%.1f,\"t\":%.2f,\"vr\":%.2f,\"vt\":%.3f,\"vc\":%.2f,\"clear\":1}", 
+                 norm.x, norm.y, actualPos.rho, actualPos.theta, actualVel.rho, actualVel.theta, cartVel);
         try {
             m_events.send(buffer, "pos", millis());
         } catch (...) {
@@ -845,6 +862,9 @@ void SisyphusWebServer::handlePatternStop(AsyncWebServerRequest *request) {
     bool success = m_polarControl->stop();
     m_hasQueuedPattern = false;
     m_queuedPattern = "";
+    m_pendingPattern = "";
+    m_runningClearing = false;
+    m_singlePatternClearing = false;
 
     if (success) {
         request->send(200, "application/json", "{\"success\":true}");
@@ -1426,6 +1446,7 @@ void SisyphusWebServer::handlePlaylistPrev(AsyncWebServerRequest *request) {
 void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
     // Get actual position from stepper motors (used for display)
     PolarCord_t actualPos = m_polarControl->getActualPosition();
+    PolarVelocity_t actualVel = m_polarControl->getActualVelocity();
     float maxRho = m_polarControl->getMaxRho();
 
     // Debug log (throttled)
@@ -1444,8 +1465,15 @@ void SisyphusWebServer::handlePosition(AsyncWebServerRequest *request) {
         CartesianCord_t norm = PolarUtils::toNormalizedCartesian(actualPos, maxRho);
 
         // Normalize to 0-1 range (center at 0.5,0.5)
-        response->printf("{\"current\":{\"x\":%.4f,\"y\":%.4f,\"rho\":%.2f,\"theta\":%.2f}}",
-            norm.x, norm.y, actualPos.rho, actualPos.theta);
+        float cosT = cosf(actualPos.theta);
+        float sinT = sinf(actualPos.theta);
+        float cartVelX = actualVel.rho * cosT - actualPos.rho * sinT * actualVel.theta;
+        float cartVelY = actualVel.rho * sinT + actualPos.rho * cosT * actualVel.theta;
+        float cartVel = sqrtf(cartVelX * cartVelX + cartVelY * cartVelY);
+
+        response->printf(
+            "{\"current\":{\"x\":%.4f,\"y\":%.4f,\"rho\":%.2f,\"theta\":%.2f,\"vr\":%.2f,\"vt\":%.3f,\"vc\":%.2f}}",
+            norm.x, norm.y, actualPos.rho, actualPos.theta, actualVel.rho, actualVel.theta, cartVel);
     }
 
     request->send(response);

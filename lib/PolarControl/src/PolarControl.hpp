@@ -91,6 +91,7 @@ public:
   uint8_t getSpeed() const { return m_speed; }
   PolarCord_t getCurrentPosition() const;
   PolarCord_t getActualPosition();
+  PolarVelocity_t getActualVelocity();
   uint32_t getSegmentsCompleted() const { return m_planner.getCompletedCount(); }
   float getMaxRho() const { return R_MAX; }
   int getProgressPercent() const;
@@ -183,6 +184,7 @@ private:
 
   // Speed setting: 1-10
   uint8_t m_speed = 5;
+  bool m_clearingSpeedActive = false;
 
   // Helpers
   void forceStop();

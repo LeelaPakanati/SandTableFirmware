@@ -986,13 +986,13 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 </div>
 
                 <select id="clearing-select">
-                    <option value="none">No Clearing</option>
-                    <option value="random">Random</option>
-                    <option value="spiral_outward">Spiral Inward (CW)</option>
-                    <option value="spiral_inward">Spiral Inward (CCW)</option>
-                    <option value="concentric_circles">Concentric Circles (Inward)</option>
-                    <option value="zigzag_radial">Zigzag Radial</option>
-                    <option value="petal_flower">Petal Flower</option>
+                    <option value="0">No Clearing</option>
+                    <option value="6">Random</option>
+                    <option value="1">Spiral Inward (CW)</option>
+                    <option value="2">Spiral Inward (CCW)</option>
+                    <option value="3">Concentric Circles (Inward)</option>
+                    <option value="4">ZigZag</option>
+                    <option value="5">Petal Flower</option>
                 </select>
                 <div class="button-row" style="margin-bottom: 12px;">
                     <button class="btn-primary" id="btn-start">Start</button>
@@ -1104,6 +1104,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.overlayRequestId = 0;
                 this.overlayObjectUrl = null;
                 this.overlayObjectUrlIsTemp = false;
+                this.overlaySuppressed = false;
                 this.init();
             }
 
@@ -1282,8 +1283,13 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.lastX = x;
                 this.lastY = y;
 
+                const formatValue = (value, digits) =>
+                    Number.isFinite(value) ? value.toFixed(digits) : '--';
+                const thetaDeg = Number.isFinite(data.t) ? data.t * 180 / Math.PI : NaN;
+                const thetaVelDeg = Number.isFinite(data.vt) ? data.vt * 180 / Math.PI : NaN;
+
                 document.getElementById('position-coords').textContent =
-                    `ρ ${data.r.toFixed(1)}mm  ·  θ ${(data.t * 180 / Math.PI).toFixed(1)}°`;
+                    `ρ ${formatValue(data.r, 1)}mm  ·  θ ${formatValue(thetaDeg, 1)}°  ·  vρ ${formatValue(data.vr, 1)}mm/s  ·  vθ ${formatValue(thetaVelDeg, 1)}°/s  ·  vxy ${formatValue(data.vc, 1)}mm/s`;
             }
 
             clearPath() {
@@ -1570,9 +1576,29 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 stateBadge.className = 'status-badge status-' + status.state.toLowerCase();
 
                 const currentPattern = status.currentPattern || 'None';
+                const isClearing = status.state === 'CLEARING';
                 if (currentPattern !== this.lastPatternName) {
                     this.clearPath();
                     this.lastPatternName = currentPattern;
+                    if (!isClearing) {
+                        this.setOverlayImage(currentPattern);
+                    }
+                }
+                if (isClearing) {
+                    if (!this.overlaySuppressed) {
+                        this.overlaySuppressed = true;
+                        this.overlayRequestId++;
+                        const img = document.getElementById('pattern-overlay');
+                        if (this.overlayObjectUrl && this.overlayObjectUrlIsTemp) {
+                            URL.revokeObjectURL(this.overlayObjectUrl);
+                        }
+                        img.style.display = 'none';
+                        img.src = '';
+                        this.overlayObjectUrl = null;
+                        this.overlayObjectUrlIsTemp = false;
+                    }
+                } else if (this.overlaySuppressed) {
+                    this.overlaySuppressed = false;
                     this.setOverlayImage(currentPattern);
                 }
 
