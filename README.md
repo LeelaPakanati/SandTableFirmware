@@ -1,109 +1,108 @@
 # Sisyphus Table Controller
 
-This project is an ESP32-based firmware for controlling a [Sisyphus Table](https://sisyphus-industries.com/) (or similar polar-coordinate sand art tables). It drives two motors (Theta and Rho) to move a magnet through sand, creating intricate patterns.
+ESP32 firmware for a Sisyphus-style polar-coordinate sand table. It drives Theta/Rho steppers, streams pattern files from SD, serves a Web UI/API, supports OTA updates, and provides motion tuning and diagnostics.
 
 ## Features
+- Dual-core task split: real-time motion on Core 1, UI/network/file streaming on Core 0.
+- S-curve motion planning with synchronized Theta/Rho timing and lookahead step generation.
+- Web UI with live position visualization, playlist control, and tuning controls.
+- SD card pattern storage, uploads, and optional PNG previews.
+- OTA firmware updates and runtime telemetry.
 
-- **Polar Motion Control:** Precise control of Theta (angle) and Rho (radius) using stepper motors.
-- **Web Interface:** Full-featured responsive Web UI for control and configuration.
-- **WiFi Connectivity:** Connects to existing WiFi or creates its own Access Point (`SisyphusTable`).
-- **SD Card Support:** Reads pattern files (`.thr`) from an SD card.
-- **Playlist Management:** Create, save, and loop playlists of patterns.
-- **LED Control:** Control brightness and potentially color of LED lighting.
-- **OTA Updates:** Upload new firmware wirelessly.
-- **Motion Tuning:** Adjust acceleration, velocity, and jerk settings via the Web UI.
+## Hardware
+- ESP32 dev board
+- 2x (or 3x) TMC2209 stepper drivers (UART)
+- 2x stepper motors (Theta + Rho)
+- SD card module
+- 12V/24V PSU sized for motors and LEDs
 
-## Hardware Requirements
+## Quick Start
+1. Open the project in PlatformIO.
+2. Adjust WiFi credentials in `src/main.cpp` if desired.
+3. Build and flash:
+   ```bash
+   pio run -t upload
+   ```
+4. Upload filesystem assets if needed:
+   ```bash
+   pio run -t uploadfs
+   ```
+5. Connect to the device IP and open the Web UI.
 
-- **Microcontroller:** ESP32 Dev Board (or compatible).
-- **Stepper Drivers:** 2x or 3x TMC2209 (UART control supported).
-    - Theta Motor
-    - Rho Motor
-    - (Optional) Rho Counter-balance or LED dedicated driver?
-- **Motors:** 2x Stepper Motors.
-- **Storage:** SD Card Module.
-- **Power Supply:** Sufficient 12V/24V PSU for motors and LEDs.
+## Configuration
+Key settings in `src/main.cpp`:
+- `AP_SSID`, `AP_PWD`: WiFi AP fallback
+- Static IP defaults (`100.76.149.200`)
+- OTA hostname/password
 
-## Getting Started
+Pin defaults live in `lib/PolarControl/src/PolarControl.hpp`:
+- Rho Step: 33
+- Rho Dir: 25
+- Theta Step: 32
+- Theta Dir: 22
+- UART RX: 27
+- UART TX: 26
 
-### Prerequisites
-
-- [PlatformIO](https://platformio.org/) (VS Code Extension recommended).
-- Git.
-
-### Installation
-
-1.  Clone this repository:
-    ```bash
-    git clone https://github.com/yourusername/SisyphusTable.git
-    cd SisyphusTable
-    ```
-2.  Open the project in PlatformIO.
-3.  Configure your WiFi credentials in `src/main.cpp` (or use the WiFiManager portal on first boot):
-    ```cpp
-    #define AP_SSID "SisyphusTable"
-    #define AP_PWD "sandpatterns"
-    ```
-4.  Build and Upload:
-    ```bash
-    pio run -t upload
-    ```
-5.  Upload Filesystem (if needed for Web UI assets):
-    ```bash
-    pio run -t uploadfs
-    ```
-
-### Pin Configuration
-
-Default pinout (check `lib/PolarControl/src/PolarControl.hpp`):
-
-| Function | Pin |
-|----------|-----|
-| Rho Step | 33  |
-| Rho Dir  | 25  |
-| Theta Step| 32 |
-| Theta Dir| 22  |
-| UART RX  | 27  |
-| UART TX  | 26  |
-
-## Usage
-
-1.  **Power on** the table.
-2.  Connect to the WiFi network `SisyphusTable` (password: `sandpatterns`) or the network you configured.
-3.  Navigate to `http://100.76.149.200` (static IP) or the device's assigned IP.
-4.  **Web Interface:**
-    -   **Upload:** Upload `.thr` pattern files.
-    -   **Play:** Select a pattern to start drawing.
-    -   **Playlist:** Queue multiple patterns.
-    -   **Settings:** Tune motor parameters and LED brightness.
+## Web UI and API
+Core endpoints (see `lib/WebServer/src/SisyphusWebServer.cpp`):
+- `GET /` UI
+- `GET /api/status` current state and telemetry
+- `GET /api/stream` SSE position stream
+- `POST /api/pattern/start` start a pattern
+- `POST /api/pattern/stop|pause|resume` control playback
+- `GET /api/files` list files
+- `POST /api/files/upload` upload `.thr` and optional `.png`
+- `POST /api/files/delete` delete a pattern
+- `GET|POST /api/led/brightness` LED control
+- `GET|POST /api/speed` speed control
+- `GET /api/tuning/*` driver and motion tuning
 
 ## Pattern Format (.thr)
-
-The system accepts `.thr` text files. Each line represents a point in polar coordinates:
-
-```text
-theta rho
+Text file of polar coordinates in radians and normalized radius:
 ```
-
--   `theta`: Angle in radians. The system automatically normalizes theta to the range `[-PI, PI]` between patterns to ensure the most efficient movement to the next starting point.
--   `rho`: Normalized radius (0.0 to 1.0). 0.0 is center, 1.0 is edge.
-
-Example:
-```text
+# comments with # or //
 0.0 0.5
 0.1 0.5
 ...
 6.28 0.5
 ```
+- `theta`: radians
+- `rho`: normalized 0.0 to 1.0 (scaled by max radius)
+- Separators: space, comma, or tab
 
-## UI & Visualization
+File parsing ignores empty/comment lines. Lines longer than 127 characters are skipped and reported to the error log.
 
-The web interface features a real-time position viewer. 
-![Web UI screenshot](docs/images/webserver-screenshot.png)
-- **PNG Overlays:** To provide a preview for a pattern, upload a square PNG (recommended 800x800) alongside the `.thr` file.
-- **Coordinates:** The viewer maps the table's polar coordinates to a 1:1 Cartesian space.
+## File Storage Layout
+- Preferred: `/patterns/name/name.thr` and `/patterns/name/name.png`
+- Fallback: `/patterns/name.thr` and `/patterns/name.png`
 
+The Web UI accepts `.thr` plus optional `.png` uploads with the same base name.
 
-## License
+## Motion Planning
+- S-curve profiles per axis with synchronized segment durations.
+- Lookahead step generation into a queue to avoid underruns.
+- PREPARING state is used when a file is loading and the first coord has not arrived yet.
 
-[MIT](LICENSE)
+## Logging and Diagnostics
+- Serial logs include queue depth, underruns, timing stats, and state changes.
+- Error log is stored in memory and exposed via `GET /api/errors`.
+
+## Tests
+Native motion planner tests:
+```bash
+pio run -e native
+./run_all_tests.sh
+```
+
+## Security and Operational Notes
+- Web endpoints are unauthenticated and CORS is open. Use trusted networks.
+- WiFi and OTA credentials are hard-coded by default; update before deployment.
+
+## Directory Map
+```
+/        - firmware root
+lib/     - PolarControl, WebServer, SDCard, Playlist, LEDController
+src/     - main firmware entry
+scripts/ - helper scripts for upload/status
+test/    - native motion planner tests and pattern files
+```
