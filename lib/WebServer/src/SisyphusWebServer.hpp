@@ -102,6 +102,7 @@ private:
     void noteRequest(AsyncWebServerRequest *request);
     
     void updateFileListCache();
+    struct FileEntry;
     const FileEntry* findFileEntryByBase(const String& baseName) const;
 
     unsigned long m_lastPosBroadcast = 0; // Timer for position streaming
