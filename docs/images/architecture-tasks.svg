@@ -1,16 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520">
   <defs>
     <style>
-      .title { font: 600 20px 'Arial', sans-serif; fill: #1f2933; }
-      .label { font: 14px 'Arial', sans-serif; fill: #1f2933; }
-      .small { font: 12px 'Arial', sans-serif; fill: #52616b; }
-      .box { fill: #f7f9fc; stroke: #233142; stroke-width: 1.5; rx: 10; ry: 10; }
-      .core { fill: #e3eefc; stroke: #1d4b8f; stroke-width: 2; rx: 14; ry: 14; }
-      .arrow { stroke: #1f2933; stroke-width: 1.5; marker-end: url(#arrow); }
+      .title { font: 600 20px 'Arial', sans-serif; fill: #e5e7eb; }
+      .label { font: 14px 'Arial', sans-serif; fill: #e5e7eb; }
+      .small { font: 12px 'Arial', sans-serif; fill: #a7b0ba; }
+      .box { fill: #111827; stroke: #4b5563; stroke-width: 1.5; rx: 10; ry: 10; }
+      .core { fill: #0b1220; stroke: #60a5fa; stroke-width: 2; rx: 14; ry: 14; }
+      .arrow { stroke: #cbd5f5; stroke-width: 1.5; marker-end: url(#arrow); }
       .dashed { stroke-dasharray: 6 4; }
     </style>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L9,3 L0,6 Z" fill="#1f2933" />
+      <path d="M0,0 L9,3 L0,6 Z" fill="#cbd5f5" />
     </marker>
   </defs>
 
