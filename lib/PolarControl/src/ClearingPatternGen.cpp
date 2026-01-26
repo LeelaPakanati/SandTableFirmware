@@ -50,9 +50,9 @@ PolarCord_t ClearingPatternGen::getNextPos() {
 
 PolarCord_t ClearingPatternGen::generateSpiralOutward() {
     // Spiral from edge (rho=maxRho) to center (rho=0) over 10 rotations (clockwise)
-    static constexpr float NUM_ROTATIONS = 10.0f;
+    static constexpr float NUM_ROTATIONS = 32.0f;
     static constexpr float TOTAL_THETA = NUM_ROTATIONS * 2.0f * PI;
-    static constexpr float THETA_STEP = 0.1f;
+    static constexpr float THETA_STEP = 0.12f;
 
     if (m_currentTheta >= TOTAL_THETA) {
         m_complete = true;
@@ -77,9 +77,9 @@ PolarCord_t ClearingPatternGen::generateSpiralOutward() {
 
 PolarCord_t ClearingPatternGen::generateSpiralInward() {
     // Spiral from edge (rho=maxRho) to center (rho=0) over 10 rotations (counterclockwise)
-    static constexpr float NUM_ROTATIONS = 10.0f;
+    static constexpr float NUM_ROTATIONS = 32.0f;
     static constexpr float TOTAL_THETA = NUM_ROTATIONS * 2.0f * PI;
-    static constexpr float THETA_STEP = 0.1f;
+    static constexpr float THETA_STEP = 0.12f;
 
     if (m_currentTheta >= TOTAL_THETA) {
         m_complete = true;
@@ -104,8 +104,8 @@ PolarCord_t ClearingPatternGen::generateSpiralInward() {
 
 PolarCord_t ClearingPatternGen::generateConcentricCircles() {
     // 9 circles at evenly spaced radii
-    static constexpr int NUM_CIRCLES = 9;
-    static constexpr float THETA_STEP = 0.1f;
+    static constexpr int NUM_CIRCLES = 14;
+    static constexpr float THETA_STEP = 0.12f;
     static constexpr float CIRCLE_THETA_MAX = 2.0f * PI;
     static constexpr int LAST_CIRCLE_INDEX = NUM_CIRCLES - 1;
 
@@ -147,53 +147,50 @@ PolarCord_t ClearingPatternGen::generateConcentricCircles() {
 }
 
 PolarCord_t ClearingPatternGen::generateZigzagRadial() {
-    // 16 spokes at 22.5° intervals (360° / 16 = 22.5°)
-    static constexpr int NUM_SPOKES = 16;
-    static constexpr float SPOKE_ANGLE = (2.0f * PI) / NUM_SPOKES;
-    static constexpr float RHO_STEP = 20.0f; // mm per step
+    // Horizontal zigzag across circular table (edge-to-edge chords).
+    static constexpr float Y_STEP = 16.0f; // mm between zigzag rows
+    static constexpr float X_STEP = 16.0f; // mm along each row
 
-    if (m_spokeIndex >= NUM_SPOKES) {
+    float y = -m_maxRho + (m_circleIndex * Y_STEP);
+    if (y > m_maxRho) {
         m_complete = true;
-        LOG("Zigzag radial complete\r\n");
+        LOG("Zigzag across complete\r\n");
         return {std::nan(""), std::nan("")};
     }
 
-    float theta = m_spokeIndex * SPOKE_ANGLE;
+    float xMax = std::sqrt(std::max(0.0f, (m_maxRho * m_maxRho) - (y * y)));
+    float startX = -xMax;
+    float endX = xMax;
+    bool leftToRight = (m_circleIndex % 2 == 0);
 
-    if (!m_inward) {
-        // Moving outward (center → edge)
-        if (m_currentRho >= m_maxRho) {
-            m_inward = true;
-            return {theta, m_maxRho};
-        }
-        float rho = m_currentRho;
-        m_currentRho += RHO_STEP;
-        return {theta, rho};
-    } else {
-        // Moving inward (edge → center)
-        if (m_currentRho <= 0.0) {
-            if (m_spokeIndex >= NUM_SPOKES - 1) {
-                m_complete = true;
-                return {theta, 0.0};
-            }
-
-            // Move to next spoke
-            m_spokeIndex++;
-            m_inward = false;
-            m_currentRho = 0.0;
-            return {m_spokeIndex * SPOKE_ANGLE, 0.0};
-        }
-        float rho = m_currentRho;
-        m_currentRho -= RHO_STEP;
-        return {theta, rho};
+    int maxSteps = 0;
+    if (X_STEP > 0.0f && xMax > 0.0f) {
+        maxSteps = static_cast<int>(std::floor((2.0f * xMax) / X_STEP));
     }
+
+    if (m_spokeIndex > maxSteps) {
+        m_circleIndex++;
+        m_spokeIndex = 0;
+        return generateZigzagRadial();
+    }
+
+    float x = leftToRight ? (startX + (m_spokeIndex * X_STEP))
+                          : (endX - (m_spokeIndex * X_STEP));
+    if (x < startX) x = startX;
+    if (x > endX) x = endX;
+
+    m_spokeIndex++;
+
+    float rho = std::sqrt((x * x) + (y * y));
+    float theta = std::atan2(y, x);
+    return {theta, rho};
 }
 
 PolarCord_t ClearingPatternGen::generatePetalFlower() {
     // Petal flower with 8 petals, multiple passes at decreasing amplitudes
     static constexpr int NUM_PETALS = 8;
-    static constexpr int NUM_PASSES = 5; // 5 passes at different amplitudes
-    static constexpr float THETA_STEP = 0.05f; // Finer step for smoother petals
+    static constexpr int NUM_PASSES = 8; // 8 passes at different amplitudes
+    static constexpr float THETA_STEP = 0.08f; // Coarser step for faster clears
     static constexpr float PASS_THETA_MAX = 2.0f * PI;
     static constexpr int LAST_PASS_INDEX = NUM_PASSES - 1;
 
