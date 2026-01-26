@@ -11,6 +11,11 @@ ClearingPatternGen::ClearingPatternGen(ClearingPattern pattern, float maxRho)
       m_inward(false),
       m_complete(false) {
 
+    if (m_pattern == ZIGZAG_RADIAL) {
+        m_currentRho = m_maxRho;
+        m_inward = true;
+    }
+
     LOG("ClearingPatternGen created: pattern=%d, maxRho=%.2f\r\n", pattern, maxRho);
 }
 
@@ -44,20 +49,26 @@ PolarCord_t ClearingPatternGen::getNextPos() {
 }
 
 PolarCord_t ClearingPatternGen::generateSpiralOutward() {
-    // Spiral from center (rho=0) to edge (rho=maxRho) over 10 rotations
+    // Spiral from edge (rho=maxRho) to center (rho=0) over 10 rotations (clockwise)
     static constexpr float NUM_ROTATIONS = 10.0f;
     static constexpr float TOTAL_THETA = NUM_ROTATIONS * 2.0f * PI;
     static constexpr float THETA_STEP = 0.1f;
 
-    if (m_currentTheta > TOTAL_THETA) {
+    if (m_currentTheta >= TOTAL_THETA) {
         m_complete = true;
         LOG("Spiral outward complete\r\n");
         return {std::nan(""), std::nan("")};
     }
 
-    // Linear rho increase from 0 to maxRho
-    float rho = m_maxRho * (m_currentTheta / TOTAL_THETA);
-    float theta = m_currentTheta;
+    if (m_currentTheta + THETA_STEP >= TOTAL_THETA) {
+        m_complete = true;
+        LOG("Spiral outward complete\r\n");
+        return {-TOTAL_THETA, 0.0f};
+    }
+
+    // Linear rho decrease from maxRho to 0
+    float rho = m_maxRho * (1.0f - m_currentTheta / TOTAL_THETA);
+    float theta = -m_currentTheta;
 
     m_currentTheta += THETA_STEP;
 
@@ -65,15 +76,21 @@ PolarCord_t ClearingPatternGen::generateSpiralOutward() {
 }
 
 PolarCord_t ClearingPatternGen::generateSpiralInward() {
-    // Spiral from edge (rho=maxRho) to center (rho=0) over 10 rotations
+    // Spiral from edge (rho=maxRho) to center (rho=0) over 10 rotations (counterclockwise)
     static constexpr float NUM_ROTATIONS = 10.0f;
     static constexpr float TOTAL_THETA = NUM_ROTATIONS * 2.0f * PI;
     static constexpr float THETA_STEP = 0.1f;
 
-    if (m_currentTheta > TOTAL_THETA) {
+    if (m_currentTheta >= TOTAL_THETA) {
         m_complete = true;
         LOG("Spiral inward complete\r\n");
         return {std::nan(""), std::nan("")};
+    }
+
+    if (m_currentTheta + THETA_STEP >= TOTAL_THETA) {
+        m_complete = true;
+        LOG("Spiral inward complete\r\n");
+        return {TOTAL_THETA, 0.0f};
     }
 
     // Linear rho decrease from maxRho to 0
@@ -90,6 +107,7 @@ PolarCord_t ClearingPatternGen::generateConcentricCircles() {
     static constexpr int NUM_CIRCLES = 9;
     static constexpr float THETA_STEP = 0.1f;
     static constexpr float CIRCLE_THETA_MAX = 2.0f * PI;
+    static constexpr int LAST_CIRCLE_INDEX = NUM_CIRCLES - 1;
 
     if (m_circleIndex >= NUM_CIRCLES) {
         m_complete = true;
@@ -98,7 +116,10 @@ PolarCord_t ClearingPatternGen::generateConcentricCircles() {
     }
 
     // Current circle radius
-    float rho = m_maxRho * (m_circleIndex + 1.0f) / NUM_CIRCLES;
+    float rho = 0.0f;
+    if (LAST_CIRCLE_INDEX > 0) {
+        rho = m_maxRho * (LAST_CIRCLE_INDEX - m_circleIndex) / static_cast<float>(LAST_CIRCLE_INDEX);
+    }
 
     // Generate points around the circle
     if (m_currentTheta >= CIRCLE_THETA_MAX) {
@@ -108,7 +129,10 @@ PolarCord_t ClearingPatternGen::generateConcentricCircles() {
 
         // Return to the start of the next circle
         if (m_circleIndex < NUM_CIRCLES) {
-            rho = m_maxRho * (m_circleIndex + 1) / NUM_CIRCLES;
+            rho = 0.0f;
+            if (LAST_CIRCLE_INDEX > 0) {
+                rho = m_maxRho * (LAST_CIRCLE_INDEX - m_circleIndex) / static_cast<float>(LAST_CIRCLE_INDEX);
+            }
             return {0.0, rho};
         } else {
             m_complete = true;
@@ -148,16 +172,15 @@ PolarCord_t ClearingPatternGen::generateZigzagRadial() {
     } else {
         // Moving inward (edge → center)
         if (m_currentRho <= 0.0) {
+            if (m_spokeIndex >= NUM_SPOKES - 1) {
+                m_complete = true;
+                return {theta, 0.0};
+            }
+
             // Move to next spoke
             m_spokeIndex++;
             m_inward = false;
             m_currentRho = 0.0;
-
-            if (m_spokeIndex >= NUM_SPOKES) {
-                m_complete = true;
-                return {std::nan(""), std::nan("")};
-            }
-
             return {m_spokeIndex * SPOKE_ANGLE, 0.0};
         }
         float rho = m_currentRho;
@@ -167,11 +190,12 @@ PolarCord_t ClearingPatternGen::generateZigzagRadial() {
 }
 
 PolarCord_t ClearingPatternGen::generatePetalFlower() {
-    // Petal flower with 8 petals, multiple passes at increasing amplitudes
+    // Petal flower with 8 petals, multiple passes at decreasing amplitudes
     static constexpr int NUM_PETALS = 8;
     static constexpr int NUM_PASSES = 5; // 5 passes at different amplitudes
     static constexpr float THETA_STEP = 0.05f; // Finer step for smoother petals
     static constexpr float PASS_THETA_MAX = 2.0f * PI;
+    static constexpr int LAST_PASS_INDEX = NUM_PASSES - 1;
 
     if (m_circleIndex >= NUM_PASSES) {
         m_complete = true;
@@ -179,8 +203,11 @@ PolarCord_t ClearingPatternGen::generatePetalFlower() {
         return {std::nan(""), std::nan("")};
     }
 
-    // Amplitude increases with each pass
-    float amplitude = m_maxRho * (m_circleIndex + 1.0f) / NUM_PASSES;
+    // Amplitude decreases with each pass
+    float amplitude = 0.0f;
+    if (LAST_PASS_INDEX > 0) {
+        amplitude = m_maxRho * (LAST_PASS_INDEX - m_circleIndex) / static_cast<float>(LAST_PASS_INDEX);
+    }
 
     if (m_currentTheta >= PASS_THETA_MAX) {
         // Move to next pass
@@ -193,7 +220,10 @@ PolarCord_t ClearingPatternGen::generatePetalFlower() {
         }
 
         // Start next pass
-        amplitude = m_maxRho * (m_circleIndex + 1) / NUM_PASSES;
+        amplitude = 0.0f;
+        if (LAST_PASS_INDEX > 0) {
+            amplitude = m_maxRho * (LAST_PASS_INDEX - m_circleIndex) / static_cast<float>(LAST_PASS_INDEX);
+        }
     }
 
     float theta = m_currentTheta;

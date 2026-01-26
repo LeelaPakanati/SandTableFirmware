@@ -4,9 +4,9 @@
 
 enum ClearingPattern {
     CLEARING_NONE,       // No clearing
-    SPIRAL_OUTWARD,      // Center → edge
-    SPIRAL_INWARD,       // Edge → center
-    CONCENTRIC_CIRCLES,  // Series of circles from center outward
+    SPIRAL_OUTWARD,      // Edge → center (clockwise)
+    SPIRAL_INWARD,       // Edge → center (counterclockwise)
+    CONCENTRIC_CIRCLES,  // Series of circles from edge inward
     ZIGZAG_RADIAL,       // Radial zigzag pattern
     PETAL_FLOWER,        // Flower clearing pattern
     CLEARING_RANDOM      // Pick a random clearing pattern (not NONE)

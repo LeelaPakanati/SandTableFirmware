@@ -988,9 +988,9 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 <select id="clearing-select">
                     <option value="none">No Clearing</option>
                     <option value="random">Random</option>
-                    <option value="spiral_outward">Spiral Outward</option>
-                    <option value="spiral_inward">Spiral Inward</option>
-                    <option value="concentric_circles">Concentric Circles</option>
+                    <option value="spiral_outward">Spiral Inward (CW)</option>
+                    <option value="spiral_inward">Spiral Inward (CCW)</option>
+                    <option value="concentric_circles">Concentric Circles (Inward)</option>
                     <option value="zigzag_radial">Zigzag Radial</option>
                     <option value="petal_flower">Petal Flower</option>
                 </select>
@@ -1099,6 +1099,11 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 this.selectedPattern = null;
                 this.files = [];
                 this.fileTimes = {};
+                this.fileImageTimes = {};
+                this.fileHasImage = {};
+                this.overlayRequestId = 0;
+                this.overlayObjectUrl = null;
+                this.overlayObjectUrlIsTemp = false;
                 this.init();
             }
 
@@ -1400,11 +1405,20 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     const data = await response.json();
                     this.files = data.files || [];
                     this.fileTimes = {};
+                    this.fileImageTimes = {};
+                    this.fileHasImage = {};
                     this.files.forEach(f => {
                         this.fileTimes[f.name] = f.time;
                         // Also store by basename for easy lookup
                         const basename = f.name.replace('.thr', '');
                         this.fileTimes[basename] = f.time;
+                        const hasImage = !!f.hasImage;
+                        this.fileHasImage[f.name] = hasImage;
+                        this.fileHasImage[basename] = hasImage;
+                        if (hasImage && f.imageTime) {
+                            this.fileImageTimes[f.name] = f.imageTime;
+                            this.fileImageTimes[basename] = f.imageTime;
+                        }
                     });
                     this.renderPatternList();
                 } catch (error) {
@@ -1422,7 +1436,11 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 container.innerHTML = this.files.map(file => {
                     const isSelected = this.selectedPattern === file.name;
                     const displayName = file.name.replace('.thr', '');
-                    const thumbUrl = `/api/pattern/image?file=${encodeURIComponent(displayName)}&t=${file.time || 0}`;
+                    const hasImage = !!file.hasImage;
+                    const imgTime = hasImage ? (file.imageTime || 0) : 0;
+                    const thumbUrl = hasImage
+                        ? `/api/pattern/image?file=${encodeURIComponent(displayName)}&t=${imgTime}`
+                        : '';
                     
                     return `
                     <div class="pattern-list-item ${isSelected ? 'selected' : ''}" data-name="${file.name}" onclick="controller.selectPattern('${file.name}')">
@@ -1445,29 +1463,95 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
 
             preloadPatternImage(filename) {
                 if (!filename || filename === 'None') return;
-                const t = this.fileTimes[filename] || 0;
-                const preload = new Image();
-                preload.src = `/api/pattern/image?file=${encodeURIComponent(filename)}&t=${t}`;
+                if (!this.fileHasImage[filename]) return;
+                const t = this.fileImageTimes[filename] || this.fileTimes[filename] || 0;
+                const url = `/api/pattern/image?file=${encodeURIComponent(filename)}&t=${t}`;
+                this.fetchPatternImageUrl(url, 1).then(result => {
+                    if (result && result.revoke) {
+                        URL.revokeObjectURL(result.src);
+                    }
+                });
             }
 
-            setOverlayImage(filename) {
+            async setOverlayImage(filename) {
                 const img = document.getElementById('pattern-overlay');
                 if (!filename || filename === 'None') {
                     img.style.display = 'none';
                     img.src = '';
                     return;
                 }
-                const t = this.fileTimes[filename] || 0;
+                if (!this.fileHasImage[filename]) {
+                    img.style.display = 'none';
+                    img.src = '';
+                    return;
+                }
+                const t = this.fileImageTimes[filename] || this.fileTimes[filename] || 0;
                 const nextSrc = `/api/pattern/image?file=${encodeURIComponent(filename)}&t=${t}`;
-                const preload = new Image();
-                preload.onload = () => {
-                    img.src = nextSrc;
+                const requestId = ++this.overlayRequestId;
+                const result = await this.fetchPatternImageUrl(nextSrc, 3);
+                if (requestId !== this.overlayRequestId) return;
+                if (this.overlayObjectUrl && this.overlayObjectUrlIsTemp) {
+                    URL.revokeObjectURL(this.overlayObjectUrl);
+                }
+                if (!result) {
+                    img.style.display = 'none';
+                    img.src = '';
+                    this.overlayObjectUrl = null;
+                    this.overlayObjectUrlIsTemp = false;
+                    return;
+                }
+                img.onload = () => {
                     img.style.display = 'block';
+                    if (result.revoke) {
+                        URL.revokeObjectURL(result.src);
+                    }
                 };
-                preload.onerror = () => {
+                img.onerror = () => {
                     img.style.display = 'none';
                 };
-                preload.src = nextSrc;
+                img.src = result.src;
+                this.overlayObjectUrl = result.src;
+                this.overlayObjectUrlIsTemp = result.revoke;
+            }
+
+            sleep(ms) {
+                return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            async fetchPatternImageUrl(url, retries) {
+                let attempt = 0;
+                while (attempt <= retries) {
+                    try {
+                        const response = await fetch(url, { cache: 'no-cache' });
+                        if (response.status === 503) {
+                            let delayMs = 1000;
+                            const retryAfter = response.headers.get('Retry-After');
+                            if (retryAfter) {
+                                const seconds = parseFloat(retryAfter);
+                                if (!Number.isNaN(seconds)) {
+                                    delayMs = Math.max(0, seconds) * 1000;
+                                }
+                            }
+                            if (attempt === retries) return null;
+                            await this.sleep(delayMs);
+                            attempt += 1;
+                            continue;
+                        }
+                        if (response.status === 304) {
+                            return { src: url, revoke: false };
+                        }
+                        if (!response.ok) {
+                            return null;
+                        }
+                        const blob = await response.blob();
+                        return { src: URL.createObjectURL(blob), revoke: true };
+                    } catch (error) {
+                        if (attempt === retries) return null;
+                        await this.sleep(1000);
+                        attempt += 1;
+                    }
+                }
+                return null;
             }
 
             async loadSystemInfo() {
