@@ -15,8 +15,8 @@
 
 // Directly include implementations for native build to resolve linker errors
 // This mimics a unity build
-#include "SCurve.hpp"
-#include "MotionPlanner.hpp"
+#include "../../lib/PolarControl/src/SCurve.cpp"
+#include "../../lib/PolarControl/src/MotionPlanner.cpp"
 
 // Test configuration
 static constexpr float R_MAX = 450.0f;           // mm
@@ -568,6 +568,51 @@ bool testPatternFile(const std::string& filepath) {
 }
 
 // ============================================================================
+// Test: Slow Motion Startup (verifies Horizon start condition)
+// ============================================================================
+
+bool testSlowMotionStartup() {
+    std::cout << "\n=== Test: Slow Motion Startup ===" << std::endl;
+    resetMock();
+
+    MotionPlanner planner;
+    planner.init(STEPS_PER_MM_R, STEPS_PER_RAD_T, R_MAX,
+                 R_MAX_VEL, R_MAX_ACCEL, R_MAX_JERK,
+                 T_MAX_VEL, T_MAX_ACCEL, T_MAX_JERK);
+
+    // Very slow move to hit horizon before queue full
+    // Max vel 10mm/s. Multiplier 0.001 -> 0.01 mm/s.
+    planner.setSpeedMultiplier(0.001f);
+
+    // Move 10mm. Duration ~1000s.
+    if (!planner.addSegment(0.0f, 10.0f)) {
+        std::cout << "Failed to add segment" << std::endl;
+        return false;
+    }
+    planner.setEndOfPattern(true);
+    planner.start();
+
+    // Process once to trigger fill
+    planner.process();
+
+    PlannerTelemetry t;
+    planner.getTelemetry(t);
+
+    std::cout << "Queue depth: " << t.queueDepth << std::endl;
+    std::cout << "Timer active: " << t.timerActive << std::endl;
+    std::cout << "Last Fill Stop Reason: " << t.lastFillStopReason << " (1=Horizon)" << std::endl;
+
+    // Check if running
+    bool passed = t.timerActive;
+    if (passed) {
+         std::cout << "PASS: Timer started" << std::endl;
+    } else {
+         std::cout << "FAIL: Timer did not start" << std::endl;
+    }
+    return passed;
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -587,6 +632,7 @@ int main(int argc, char* argv[]) {
     allPassed &= testMotionPlannerBasic();
     allPassed &= testDirectionReversal();
     allPassed &= testSpeedMultiplier();
+    allPassed &= testSlowMotionStartup();
 
     // If a pattern file was provided, test it
     if (argc > 1) {

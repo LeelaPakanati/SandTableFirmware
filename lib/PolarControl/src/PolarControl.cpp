@@ -270,6 +270,9 @@ bool PolarControl::start(std::unique_ptr<PosGen> posGen) {
 
     m_posGen = std::move(posGen);
 
+    // Ensure planner is stopped and empty
+    m_planner.stop();
+
     // Reset planner stats for new pattern
     m_planner.resetCompletedCount();
 
@@ -299,6 +302,9 @@ bool PolarControl::startClearing(std::unique_ptr<PosGen> posGen) {
     LOG("Starting Clearing Pattern\r\n");
 
     m_posGen = std::move(posGen);
+
+    // Ensure planner is stopped and empty
+    m_planner.stop();
 
     // Reset planner stats for new pattern
     m_planner.resetCompletedCount();
@@ -343,6 +349,9 @@ bool PolarControl::loadAndRunFile(String filePath, float maxRho) {
 
     // Set flag explicitly BEFORE command to prevent race condition with feedPlanner
     m_fileLoading = true;
+
+    // Ensure planner is stopped and empty
+    m_planner.stop();
 
     // Reset planner stats
     m_planner.resetCompletedCount();

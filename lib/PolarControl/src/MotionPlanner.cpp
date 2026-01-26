@@ -511,9 +511,10 @@ void MotionPlanner::process() {
     }
 
     if (m_startupHoldoff) {
-        bool metStartupConditions = (queueDepth >= (STEP_QUEUE_SIZE - 1));
-        if (metStartupConditions &&
-            m_lastFillStopReason.load() != static_cast<uint32_t>(FillStopReason::TimeBudget)) {
+        bool queueFull = (queueDepth >= (STEP_QUEUE_SIZE - 1));
+        bool horizonReached = (m_lastFillStopReason.load() == static_cast<uint32_t>(FillStopReason::Horizon));
+
+        if (queueFull || horizonReached) {
             m_startupHoldoff = false;
         }
     }
