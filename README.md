@@ -73,8 +73,7 @@ Text file of polar coordinates in radians and normalized radius:
 File parsing ignores empty/comment lines. Lines longer than 127 characters are skipped and reported to the error log.
 
 ## File Storage Layout
-- Preferred: `/patterns/name/name.thr` and `/patterns/name/name.png`
-- Fallback: `/patterns/name.thr` and `/patterns/name.png`
+- Required: `/patterns/name/name.thr` and `/patterns/name/name.png`
 
 The Web UI accepts `.thr` plus optional `.png` uploads with the same base name.
 

@@ -16,9 +16,7 @@ static constexpr size_t kResponseBufferSize = 256;
 static String resolvePatternPath(const String& filename) {
     String basename = filename;
     if (basename.endsWith(".thr")) basename = basename.substring(0, basename.length() - 4);
-    String path = "/patterns/" + basename + "/" + filename;
-    if (!SD.exists(path)) path = "/patterns/" + filename;
-    return path;
+    return "/patterns/" + basename + "/" + filename;
 }
 
 static constexpr bool kEnablePatternImages = true;
@@ -422,24 +420,7 @@ void SisyphusWebServer::updateFileListCache() {
         String name = String(file.name());
         if (name.startsWith("/")) name = name.substring(1);
 
-        if (!file.isDirectory()) {
-            if (name.endsWith(".thr")) {
-                String baseName = name.substring(0, name.length() - 4);
-                String pngPath = "/patterns/" + baseName + ".png";
-                bool hasImg = false;
-                time_t imgTime = 0;
-                
-                if (SD.exists(pngPath)) {
-                    hasImg = true;
-                    File img = SD.open(pngPath);
-                    if (img) {
-                        imgTime = img.getLastWrite();
-                        img.close();
-                    }
-                }
-                newCache.push_back({name, file.size(), file.getLastWrite(), hasImg, imgTime, false});
-            }
-        } else {
+        if (file.isDirectory()) {
             // Check for pattern inside directory
             String patternFile = name + ".thr";
             String innerPath = "/patterns/" + name + "/" + patternFile;
@@ -933,10 +914,6 @@ void SisyphusWebServer::handleFileDelete(AsyncWebServerRequest *request) {
         if (isDir) {
             deleted = removeDirectoryRecursive(dirPath.c_str());
         }
-    } else {
-        // Fallback: try flat file structure
-        String flatPath = "/patterns/" + filename;
-        if (SD.exists(flatPath)) deleted = SD.remove(flatPath);
     }
 
     if (deleted) {
