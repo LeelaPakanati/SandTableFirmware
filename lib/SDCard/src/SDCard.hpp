@@ -4,6 +4,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include "Logger.hpp"
+#include "ErrorLog.hpp"
 
 // SD Card SPI pins
 #define SD_CS_PIN   5
@@ -19,12 +20,14 @@ inline bool initSDCard() {
     // Initialize SD with CS pin, SPI instance, and high frequency (20MHz)
     if (!SD.begin(SD_CS_PIN, SPI, 40000000)) {
         LOG("ERROR: SD card mount failed!\r\n");
+        ErrorLog::instance().log("ERROR", "SD", "MOUNT_FAILED", "SD card mount failed");
         return false;
     }
 
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
         LOG("No SD card attached\r\n");
+        ErrorLog::instance().log("ERROR", "SD", "NO_CARD", "No SD card attached");
         return false;
     }
 
@@ -57,11 +60,15 @@ inline void listSDFiles(const char* dirname = "/") {
     File root = SD.open(dirname);
     if (!root) {
         LOG("ERROR: Failed to open directory\r\n");
+        ErrorLog::instance().log("ERROR", "SD", "OPEN_DIR_FAILED",
+                                 "Failed to open directory", dirname);
         return;
     }
 
     if (!root.isDirectory()) {
         LOG("ERROR: Not a directory\r\n");
+        ErrorLog::instance().log("ERROR", "SD", "NOT_DIRECTORY",
+                                 "Path is not a directory", dirname);
         return;
     }
 

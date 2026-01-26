@@ -8,6 +8,7 @@
 #include "MakeUnique.hpp"
 #include <SDCard.hpp>
 #include <ClearingPatternGen.hpp>
+#include <ErrorLog.hpp>
 
 static constexpr size_t kResponseBufferSize = 256;
 
@@ -95,6 +96,11 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
     m_server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
         noteRequest(request);
         handleStatus(request);
+    });
+
+    m_server.on("/api/errors", HTTP_GET, [this](AsyncWebServerRequest *request) {
+        noteRequest(request);
+        handleErrors(request);
     });
 
     m_server.on("/api/pattern/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
@@ -405,6 +411,8 @@ void SisyphusWebServer::updateFileListCache() {
     File root = SD.open("/patterns");
     if (!root) {
         Serial.println("ERROR: Failed to open patterns directory");
+        ErrorLog::instance().log("ERROR", "SD", "OPEN_DIR_FAILED",
+                                 "Failed to open patterns directory", "/patterns");
         m_fileListDirty = false; // Prevent infinite retry loop if SD fails
         return;
     }
@@ -681,6 +689,12 @@ void SisyphusWebServer::handleStatus(AsyncWebServerRequest *request) {
     request->send(response);
 }
 
+void SisyphusWebServer::handleErrors(AsyncWebServerRequest *request) {
+    AsyncResponseStream *response = request->beginResponseStream("application/json", 1024);
+    ErrorLog::instance().writeJson(*response);
+    request->send(response);
+}
+
 void SisyphusWebServer::handlePatternStart(AsyncWebServerRequest *request) {
     auto state = m_polarControl->getState();
     if (state != PolarControl::IDLE) {
@@ -809,11 +823,11 @@ void SisyphusWebServer::handleFileUpload(AsyncWebServerRequest *request, String 
                                         size_t index, uint8_t *data, size_t len, bool final) {
     if (index == 0) {
         unsigned long now = millis();
+        unsigned long sinceLastUpload = now - m_lastUploadTime;
         // Allow burst uploads for pattern+image
-        if (now - m_lastUploadTime < 100) { 
+        if (sinceLastUpload < 100) { 
             // Decrease timeout check to allow simultaneous uploads
         }
-        m_lastUploadTime = now;
 
         // Determine directory name from filename (remove extension)
         String basename = filename;
@@ -833,7 +847,7 @@ void SisyphusWebServer::handleFileUpload(AsyncWebServerRequest *request, String 
         // Delete existing directory only if this is a "new" upload session for this pattern
         // (to avoid deleting it again when the companion image is uploaded right after)
         if (SD.exists(dirPath)) {
-            if (now - m_lastUploadTime > 2000) { 
+            if (sinceLastUpload > 2000) { 
                 Serial.print("Deleting existing pattern directory: ");
                 Serial.println(dirPath);
                 removeDirectoryRecursive(dirPath.c_str());
@@ -854,6 +868,8 @@ void SisyphusWebServer::handleFileUpload(AsyncWebServerRequest *request, String 
         m_uploadFile = SD.open(path.c_str(), FILE_WRITE);
         if (!m_uploadFile) {
             Serial.println("Failed to open file for writing");
+            ErrorLog::instance().log("ERROR", "SD", "OPEN_WRITE_FAILED",
+                                     "Failed to open file for writing", path.c_str());
             request->send(500, "application/json",
                 "{\"success\":false,\"message\":\"Failed to create file\"}");
             return;
@@ -909,9 +925,14 @@ void SisyphusWebServer::handleFileDelete(AsyncWebServerRequest *request) {
     String pngPath = dirPath + "/" + basename + ".png";
     bool deleted = false;
 
-    if (SD.exists(dirPath) && SD.open(dirPath).isDirectory()) {
+    if (SD.exists(dirPath)) {
         // Delete entire pattern directory recursively
-        deleted = removeDirectoryRecursive(dirPath.c_str());
+        File dir = SD.open(dirPath);
+        bool isDir = dir && dir.isDirectory();
+        if (dir) dir.close();
+        if (isDir) {
+            deleted = removeDirectoryRecursive(dirPath.c_str());
+        }
     } else {
         // Fallback: try flat file structure
         String flatPath = "/patterns/" + filename;
@@ -1021,6 +1042,8 @@ void SisyphusWebServer::handlePlaylistAdd(AsyncWebServerRequest *request) {
 void SisyphusWebServer::handlePlaylistAddAll(AsyncWebServerRequest *request) {
     File root = SD.open("/patterns");
     if (!root) {
+        ErrorLog::instance().log("ERROR", "SD", "OPEN_DIR_FAILED",
+                                 "Failed to open patterns directory", "/patterns");
         request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to open patterns directory\"}");
         return;
     }
@@ -1153,6 +1176,8 @@ void SisyphusWebServer::handlePlaylistSave(AsyncWebServerRequest *request) {
     if (m_playlist.saveToFile(name)) {
         request->send(200, "application/json", "{\"success\":true}");
     } else {
+        ErrorLog::instance().log("ERROR", "PLAYLIST", "SAVE_FAILED",
+                                 "Failed to save playlist", name.c_str());
         request->send(500, "application/json",
             "{\"success\":false,\"message\":\"Failed to save playlist\"}");
     }
@@ -1170,6 +1195,8 @@ void SisyphusWebServer::handlePlaylistLoad(AsyncWebServerRequest *request) {
     if (m_playlist.loadFromFile(name)) {
         request->send(200, "application/json", "{\"success\":true}");
     } else {
+        ErrorLog::instance().log("ERROR", "PLAYLIST", "LOAD_FAILED",
+                                 "Playlist not found", name.c_str());
         request->send(404, "application/json",
             "{\"success\":false,\"message\":\"Playlist not found\"}");
     }

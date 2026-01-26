@@ -2,6 +2,7 @@
 #include "PolarUtils.hpp"
 #include "MakeUnique.hpp"
 #include "Logger.hpp"
+#include "ErrorLog.hpp"
 #include <cmath>
 #include <cstdlib>
 #include <SD.h>
@@ -48,6 +49,8 @@ void PolarControl::begin() {
     // Initialize LittleFS
     if (!LittleFS.begin(true)) {
         LOG("ERROR: LittleFS Mount Failed\r\n");
+        ErrorLog::instance().log("ERROR", "FS", "LITTLEFS_MOUNT_FAILED",
+                                 "LittleFS mount failed");
     } else {
         LOG("LittleFS Mounted\r\n");
     }
@@ -299,6 +302,8 @@ bool PolarControl::loadAndRunFile(String filePath, float maxRho) {
 
     if (m_state != IDLE) {
         LOG("ERROR: Cannot load file - system not IDLE\r\n");
+        ErrorLog::instance().log("ERROR", "FILE", "LOAD_NOT_IDLE",
+                                 "Cannot load file - system not IDLE");
         xSemaphoreGive(m_mutex);
         return false;
     }
@@ -324,6 +329,8 @@ bool PolarControl::loadAndRunFile(String filePath, float maxRho) {
     // Send command
     if (xQueueSend(m_cmdQueue, &cmd, 100) != pdTRUE) {
         LOG("ERROR: Failed to send load command\r\n");
+        ErrorLog::instance().log("ERROR", "FILE", "QUEUE_SEND_FAILED",
+                                 "Failed to send load command");
         m_fileLoading = false; // Reset if send fails
         xSemaphoreGive(m_mutex);
         return false;
@@ -657,6 +664,8 @@ bool PolarControl::saveTuningSettings() {
     File file = SD.open(TUNING_FILE, FILE_WRITE);
     if (!file) {
         LOG("Failed to open tuning file for writing\r\n");
+        ErrorLog::instance().log("ERROR", "TUNING", "WRITE_OPEN_FAILED",
+                                 "Failed to open tuning file for writing");
         return false;
     }
 
@@ -698,6 +707,8 @@ bool PolarControl::loadTuningSettings() {
     File file = SD.open(TUNING_FILE, FILE_READ);
     if (!file) {
         LOG("Failed to open tuning file for reading\r\n");
+        ErrorLog::instance().log("ERROR", "TUNING", "READ_OPEN_FAILED",
+                                 "Failed to open tuning file for reading");
         return false;
     }
 
@@ -707,6 +718,8 @@ bool PolarControl::loadTuningSettings() {
 
     if (error) {
         LOG("Failed to parse tuning file: %s\r\n", error.c_str());
+        ErrorLog::instance().log("ERROR", "TUNING", "PARSE_FAILED",
+                                 "Failed to parse tuning file", error.c_str());
         return false;
     }
 
@@ -1148,6 +1161,8 @@ void PolarControl::fileReadTask(void* arg) {
     char lineBuffer[128];
     size_t lineLen = 0;
     bool lineOverflow = false;
+    bool overflowLogged = false;
+    char currentFilename[sizeof(cmd.filename)] = {0};
     uint32_t yieldCounter = 0;
     
     // State for pending line handling
@@ -1162,6 +1177,9 @@ void PolarControl::fileReadTask(void* arg) {
             LOG("FileTask: Received command %d\r\n", cmd.type);
             if (cmd.type == FileCommand::CMD_LOAD) {
                 LOG("FileTask: Opening %s with maxRho=%.2f\r\n", cmd.filename, cmd.maxRho);
+                strncpy(currentFilename, cmd.filename, sizeof(currentFilename) - 1);
+                currentFilename[sizeof(currentFilename) - 1] = '\0';
+                overflowLogged = false;
                 directFile = SD.open(cmd.filename, FILE_READ);
                 if (directFile) {
                     directActive = true;
@@ -1176,6 +1194,8 @@ void PolarControl::fileReadTask(void* arg) {
                     LOG("FileTask: Direct file open, active=true\r\n");
                 } else {
                     LOG("FileTask: Failed to open file\r\n");
+                    ErrorLog::instance().log("ERROR", "FILE", "OPEN_FAILED",
+                                             "File task failed to open file", cmd.filename);
                     pc->m_fileLoading = false;
                     directActive = false;
                     pc->m_lastFilePos.store(0);
@@ -1225,6 +1245,12 @@ void PolarControl::fileReadTask(void* arg) {
                     LOG("Direct file: EOF reached\r\n");
                 } else {
                     pc->m_lastFilePos.store(static_cast<uint32_t>(consumedPos));
+                    if (hasLine && lineOverflow && !overflowLogged) {
+                        LOG("FileTask: Line overflow, skipping long line\r\n");
+                        ErrorLog::instance().log("ERROR", "FILE", "LINE_OVERFLOW",
+                                                 "Pattern line exceeded buffer", currentFilename);
+                        overflowLogged = true;
+                    }
                     if (!lineOverflow && parseLine(lineBuffer, directMaxRho, pendingPos)) {
                         hasPendingPos = true;
                     }

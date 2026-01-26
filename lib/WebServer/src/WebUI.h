@@ -713,6 +713,100 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             word-wrap: break-word;
         }
 
+        /* Error Log */
+        .error-banner {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            padding: 12px 16px;
+            border-radius: 12px;
+            background: rgba(239, 68, 68, 0.18);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: #fff0f0;
+            font-size: 0.9em;
+            margin-bottom: 16px;
+        }
+
+        .error-banner-title {
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.75em;
+            color: #ffe0e0;
+        }
+
+        .error-banner-count {
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(239, 68, 68, 0.6);
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+
+        .error-log-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--text-muted);
+            font-size: 0.8em;
+            margin-bottom: 10px;
+        }
+
+        .error-log-container {
+            background: #0a0a12;
+            border-radius: 12px;
+            padding: 14px;
+            max-height: 240px;
+            overflow-y: auto;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--text-primary);
+        }
+
+        .error-line {
+            display: grid;
+            grid-template-columns: 70px 60px 70px 1fr;
+            gap: 8px;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .error-line:last-child {
+            border-bottom: none;
+        }
+
+        .error-time {
+            color: var(--text-muted);
+        }
+
+        .error-level {
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .error-category {
+            color: #cbd5f5;
+            font-weight: 500;
+        }
+
+        .error-message {
+            color: var(--text-primary);
+        }
+
+        .error-line.error-error .error-level {
+            color: var(--danger);
+        }
+
+        .error-line.error-warn .error-level {
+            color: var(--warning);
+        }
+
+        .error-empty {
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
         /* Pattern List */
         .pattern-list {
             height: 300px;
@@ -804,6 +898,12 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             <a href="/files" class="nav-link">Files</a>
             <a href="/tuning" class="nav-link">Tuning</a>
         </nav>
+
+        <div id="error-banner" class="error-banner" style="display: none;">
+            <span class="error-banner-title">Errors detected</span>
+            <span class="error-banner-count" id="error-banner-count">0</span>
+            <span id="error-banner-text">No errors reported</span>
+        </div>
 
         <div class="card">
             <div class="card-title">Status</div>
@@ -976,6 +1076,17 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 </div>
             </div>
         </div>
+
+        <div class="card">
+            <div class="card-title">Error Log</div>
+            <div class="error-log-meta">
+                <span><span id="error-log-count">0</span> errors since boot</span>
+                <span id="error-log-dropped" style="display: none;">Dropped: 0</span>
+            </div>
+            <div class="error-log-container" id="error-log">
+                <div class="error-empty">No errors since boot.</div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -983,6 +1094,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             constructor() {
                 this.apiBase = '/api';
                 this.statusInterval = null;
+                this.errorsInterval = null;
                 this.lastPatternName = '';
                 this.selectedPattern = null;
                 this.files = [];
@@ -999,8 +1111,11 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 const systemInfo = await this.loadSystemInfo();
                 const status = await this.getStatus();
                 this.updateUI(status);
+                const errors = await this.getErrors();
+                this.updateErrorUI(errors);
                 await this.loadPlaylistStatus();
                 this.startStatusPolling();
+                this.startErrorPolling();
             }
             
             setupUploadHandlers() {
@@ -1214,6 +1329,14 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 return await response.json();
             }
 
+            async getErrors() {
+                const response = await fetch(this.apiBase + '/errors');
+                if (!response.ok) {
+                    return { errors: [], count: 0, total: 0, dropped: 0 };
+                }
+                return await response.json();
+            }
+
             async startPattern() {
                 const file = this.selectedPattern;
                 const clearing = document.getElementById('clearing-select').value;
@@ -1408,6 +1531,89 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 }
             }
 
+            updateErrorUI(data) {
+                const banner = document.getElementById('error-banner');
+                const bannerText = document.getElementById('error-banner-text');
+                const bannerCount = document.getElementById('error-banner-count');
+                const logContainer = document.getElementById('error-log');
+                const logCount = document.getElementById('error-log-count');
+                const droppedEl = document.getElementById('error-log-dropped');
+
+                if (!banner || !logContainer || !logCount) return;
+
+                const errors = (data && data.errors) ? data.errors : [];
+                const total = data && data.total !== undefined ? data.total : errors.length;
+                const dropped = data && data.dropped ? data.dropped : 0;
+
+                logCount.textContent = total;
+                if (droppedEl) {
+                    if (dropped > 0) {
+                        droppedEl.textContent = `Dropped: ${dropped}`;
+                        droppedEl.style.display = 'inline';
+                    } else {
+                        droppedEl.style.display = 'none';
+                    }
+                }
+
+                if (errors.length === 0) {
+                    banner.style.display = 'none';
+                    logContainer.innerHTML = '<div class="error-empty">No errors since boot.</div>';
+                    return;
+                }
+
+                const latest = errors[errors.length - 1];
+                const latestText = latest.code
+                    ? `${latest.code}: ${latest.message}`
+                    : latest.message;
+                const latestContext = latest.context ? ` - ${latest.context}` : '';
+                bannerText.textContent = latestText + latestContext;
+                bannerCount.textContent = `${total}`;
+                banner.style.display = 'flex';
+
+                logContainer.innerHTML = '';
+                for (let i = errors.length - 1; i >= 0; i--) {
+                    const entry = errors[i];
+                    const line = document.createElement('div');
+                    const level = (entry.level || 'ERROR').toLowerCase();
+                    line.className = `error-line error-${level}`;
+
+                    const time = document.createElement('span');
+                    time.className = 'error-time';
+                    time.textContent = this.formatLogTime(entry.tsMs || 0);
+
+                    const lvl = document.createElement('span');
+                    lvl.className = 'error-level';
+                    lvl.textContent = entry.level || 'ERROR';
+
+                    const cat = document.createElement('span');
+                    cat.className = 'error-category';
+                    cat.textContent = entry.category || 'SYSTEM';
+
+                    const msg = document.createElement('span');
+                    msg.className = 'error-message';
+                    const codeText = entry.code ? `${entry.code}: ` : '';
+                    const contextText = entry.context ? ` - ${entry.context}` : '';
+                    msg.textContent = `${codeText}${entry.message || ''}${contextText}`;
+
+                    line.appendChild(time);
+                    line.appendChild(lvl);
+                    line.appendChild(cat);
+                    line.appendChild(msg);
+                    logContainer.appendChild(line);
+                }
+            }
+
+            formatLogTime(ms) {
+                const totalSeconds = Math.floor(ms / 1000);
+                const h = Math.floor(totalSeconds / 3600);
+                const m = Math.floor((totalSeconds % 3600) / 60);
+                const s = totalSeconds % 60;
+                const hh = String(h).padStart(2, '0');
+                const mm = String(m).padStart(2, '0');
+                const ss = String(s).padStart(2, '0');
+                return `${hh}:${mm}:${ss}`;
+            }
+
             formatUptime(seconds) {
                 const h = Math.floor(seconds / 3600);
                 const m = Math.floor((seconds % 3600) / 60);
@@ -1422,6 +1628,13 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                     const status = await this.getStatus();
                     this.updateUI(status);
                 }, 500);
+            }
+
+            startErrorPolling() {
+                this.errorsInterval = setInterval(async () => {
+                    const errors = await this.getErrors();
+                    this.updateErrorUI(errors);
+                }, 1000);
             }
 
             // Playlist methods

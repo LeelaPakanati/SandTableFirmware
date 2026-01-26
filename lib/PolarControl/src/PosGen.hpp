@@ -5,6 +5,7 @@
 #include <cmath>
 #include "PolarUtils.hpp"
 #include "Logger.hpp"
+#include "ErrorLog.hpp"
 
 class PosGen {
   public:
@@ -33,6 +34,8 @@ class FilePosGen : public PosGen {
       m_file = m_fs.open(filePath.c_str(), FILE_READ);
       if (!m_file) {
         LOG("ERROR: Could not open file: %s\r\n", filePath.c_str());
+        ErrorLog::instance().log("ERROR", "FILE", "OPEN_FAILED",
+                                 "Could not open pattern file", filePath.c_str());
       } else {
         m_fileSize = m_file.size();
         LOG("Opened file: %s (Size: %u bytes)\r\n", filePath.c_str(), m_fileSize);
@@ -87,6 +90,10 @@ class FilePosGen : public PosGen {
         return {theta, rho};
       } else {
         LOG("ERROR: Invalid line format at line %d: %s\r\n", m_currLine, line.c_str());
+        char context[96];
+        snprintf(context, sizeof(context), "line=%d file=%s", m_currLine, m_currFile.c_str());
+        ErrorLog::instance().log("ERROR", "FILE", "PARSE_FAILED",
+                                 "Invalid line format in pattern file", context);
         return getNextPos();
       }
     }

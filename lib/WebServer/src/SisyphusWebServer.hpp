@@ -45,6 +45,7 @@ private:
     // Route handlers
     void handlePosition(AsyncWebServerRequest *request);
     void handleStatus(AsyncWebServerRequest *request);
+    void handleErrors(AsyncWebServerRequest *request);
     void handlePatternStart(AsyncWebServerRequest *request);
     void handlePatternStop(AsyncWebServerRequest *request);
     void handlePatternPause(AsyncWebServerRequest *request);

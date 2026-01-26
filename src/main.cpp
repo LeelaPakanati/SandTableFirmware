@@ -1,5 +1,6 @@
 #include "Arduino.h"
 #include <SDCard.hpp>
+#include <ErrorLog.hpp>
 
 #include <WiFiManager.h>
 #include <ArduinoOTA.h>
@@ -92,6 +93,14 @@ void motorTask(void *parameter) {
                     telemetry.genSegmentIdx,
                     telemetry.timerActive ? 1 : 0,
                     telemetry.running ? 1 : 0);
+                char context[160];
+                snprintf(context, sizeof(context),
+                         "delta=%u q=%u min=%u max=%u consec=%u maxConsec=%u lastUs=%u coordQ=%u",
+                         delta, telemetry.queueDepth, telemetry.minQueueDepth, telemetry.maxQueueDepth,
+                         telemetry.consecutiveUnderruns, telemetry.maxConsecutiveUnderruns,
+                         sinceLastUs, coordDepth);
+                ErrorLog::instance().log("ERROR", "MOTION", "QUEUE_UNDERRUN",
+                                         "Queue underrun burst", context);
                 LOG("[MOTOR Core%d] Underrun context | segCompleted: %u | coordQ: %u | fileLine: %u\r\n",
                     xPortGetCoreID(),
                     telemetry.completedCount,
@@ -173,6 +182,8 @@ void setup() {
     // Initialize SD Card
     if (!initSDCard()) {
         LOG("WARNING: Running without SD card storage!\r\n");
+        ErrorLog::instance().log("ERROR", "SD", "MOUNT_FAILED",
+                                 "SD card mount failed", "Running without SD storage");
     } else {
         listSDFiles();
     }
@@ -189,6 +200,8 @@ void setup() {
 
     if (!wm.autoConnect(AP_SSID, AP_PWD)) {
         LOG("Failed to connect to WiFi\r\n");
+        ErrorLog::instance().log("ERROR", "WIFI", "CONNECT_FAILED",
+                                 "Failed to connect to WiFi", AP_SSID);
         ESP.restart();
     }
 
@@ -214,11 +227,22 @@ void setup() {
     });
     ArduinoOTA.onError([](ota_error_t error) {
         Serial.printf("OTA Error[%u]: ", error); // Keep Serial for errors if web logger fails
-        if (error == OTA_AUTH_ERROR) LOG("OTA Auth Failed\r\n");
-        else if (error == OTA_BEGIN_ERROR) LOG("OTA Begin Failed\r\n");
-        else if (error == OTA_CONNECT_ERROR) LOG("OTA Connect Failed\r\n");
-        else if (error == OTA_RECEIVE_ERROR) LOG("OTA Receive Failed\r\n");
-        else if (error == OTA_END_ERROR) LOG("OTA End Failed\r\n");
+        if (error == OTA_AUTH_ERROR) {
+            LOG("OTA Auth Failed\r\n");
+            ErrorLog::instance().log("ERROR", "OTA", "AUTH_FAILED", "OTA auth failed");
+        } else if (error == OTA_BEGIN_ERROR) {
+            LOG("OTA Begin Failed\r\n");
+            ErrorLog::instance().log("ERROR", "OTA", "BEGIN_FAILED", "OTA begin failed");
+        } else if (error == OTA_CONNECT_ERROR) {
+            LOG("OTA Connect Failed\r\n");
+            ErrorLog::instance().log("ERROR", "OTA", "CONNECT_FAILED", "OTA connect failed");
+        } else if (error == OTA_RECEIVE_ERROR) {
+            LOG("OTA Receive Failed\r\n");
+            ErrorLog::instance().log("ERROR", "OTA", "RECEIVE_FAILED", "OTA receive failed");
+        } else if (error == OTA_END_ERROR) {
+            LOG("OTA End Failed\r\n");
+            ErrorLog::instance().log("ERROR", "OTA", "END_FAILED", "OTA end failed");
+        }
     });
     ArduinoOTA.begin();
     LOG("OTA updates enabled\r\n");
