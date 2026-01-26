@@ -99,6 +99,7 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
     m_stepQueueTail = 0;
     m_completedCount = 0;
     m_lastUnderrunUs.store(0);
+    m_underrunCount.store(0);
     m_consecutiveUnderruns.store(0);
     m_maxConsecutiveUnderruns.store(0);
     m_minQueueDepth = 0xFFFFFFFFu;
@@ -423,6 +424,8 @@ void MotionPlanner::start() {
     m_running = true;
     m_segmentStartTime = micros();
     m_segmentElapsed = 0.0f;
+
+    m_startupHoldoff = true;
     
     // Initialize generation state
     m_genSegmentIdx = m_segmentTail;
@@ -441,6 +444,7 @@ void MotionPlanner::stop() {
 
     m_running = false;
     m_timerActive = false;
+    m_startupHoldoff = false;
 
     // Clear step queue
     m_stepQueueHead = 0;
@@ -469,6 +473,7 @@ void MotionPlanner::stop() {
     m_maxConsecutiveUnderruns.store(0);
     m_minQueueDepth = 0xFFFFFFFFu;
     m_maxQueueDepth = 0;
+    m_lastQueuedEventTime = 0;
 }
 
 void MotionPlanner::process() {
@@ -505,8 +510,16 @@ void MotionPlanner::process() {
         m_segments[m_segmentTail].executing = true;
     }
 
-    // Auto-start timer if buffer has any data
-    if (!m_timerActive) {
+    if (m_startupHoldoff) {
+        bool metStartupConditions = (queueDepth >= (STEP_QUEUE_SIZE - 1));
+        if (metStartupConditions &&
+            m_lastFillStopReason.load() != static_cast<uint32_t>(FillStopReason::TimeBudget)) {
+            m_startupHoldoff = false;
+        }
+    }
+
+    // Auto-start timer if buffer has any data and startup holdoff is cleared
+    if (!m_timerActive && !m_startupHoldoff) {
         if (queueDepth > 0) {
             esp_timer_start_periodic((esp_timer_handle_t)m_timerHandle, STEP_TIMER_PERIOD_US);
             m_timerActive = true;
@@ -618,6 +631,10 @@ void MotionPlanner::fillStepQueue(uint32_t horizonUs) {
                 m_genSegmentStartTime += (uint32_t)(seg.duration * 1000000.0f);
                 m_genSegmentIdx = (m_genSegmentIdx + 1) % SEGMENT_BUFFER_SIZE;
                 continue;
+            }
+            uint32_t blankTime = startTime + (uint32_t)(tEnd * 1000000.0f);
+            if (blankTime > m_lastQueuedEventTime && getStepQueueSpace() > 0) {
+                queueStepEvent(blankTime, 0, 0);
             }
             m_fillStopHorizonCount.fetch_add(1);
             m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::Horizon));
@@ -747,6 +764,10 @@ void MotionPlanner::fillStepQueue(uint32_t horizonUs) {
         }
 
         // Horizon reached within this segment; stop.
+        uint32_t blankTime = startTime + (uint32_t)(tEnd * 1000000.0f);
+        if (blankTime > m_lastQueuedEventTime && getStepQueueSpace() > 0) {
+            queueStepEvent(blankTime, 0, 0);
+        }
         m_fillStopHorizonCount.fetch_add(1);
         m_lastFillStopReason.store(static_cast<uint32_t>(FillStopReason::Horizon));
         break;
@@ -776,6 +797,7 @@ bool MotionPlanner::queueStepEvent(uint32_t time, uint8_t stepMask, uint8_t dirM
     m_stepQueue[m_stepQueueHead].stepMask = stepMask;
     m_stepQueue[m_stepQueueHead].dirMask = dirMask;
     m_stepQueueHead = nextHead;
+    m_lastQueuedEventTime = time;
 
     return true;
 }

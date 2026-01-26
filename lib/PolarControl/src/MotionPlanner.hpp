@@ -32,8 +32,8 @@
 static constexpr int SEGMENT_BUFFER_SIZE = 32;
 static constexpr int STEP_QUEUE_SIZE = 512;
 static constexpr float MIN_SEGMENT_DURATION = 0.010f;  // 10ms minimum
-static constexpr uint32_t STEP_TIMER_PERIOD_US = 100;  // 10kHz ISR
-static constexpr uint32_t STEP_QUEUE_HORIZON_US = 1000000;  // 1000ms lookahead
+static constexpr uint32_t STEP_TIMER_PERIOD_US = 50;  // 20kHz ISR
+static constexpr uint32_t STEP_QUEUE_HORIZON_US = 250000;  // 250ms lookahead
 static constexpr uint32_t STEP_QUEUE_MAX_PROCESS_US = 20000;
 
 enum class FillStopReason : uint32_t {
@@ -241,6 +241,7 @@ private:
     std::atomic<uint32_t> m_fillStopQueueFullCount{0};
     std::atomic<uint32_t> m_fillStopTimeBudgetCount{0};
     std::atomic<uint32_t> m_lastFillStopReason{0};
+    uint32_t m_lastQueuedEventTime = 0;
 
     // Timing
     uint32_t m_segmentStartTime;     // Microseconds when current segment started
@@ -251,6 +252,7 @@ private:
     bool m_timerActive = false;
     bool m_endOfPattern;
     uint32_t m_completedCount;
+    bool m_startupHoldoff = false;
 
     // Timer handle (ESP32 specific)
     void* m_timerHandle;

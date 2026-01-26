@@ -362,9 +362,6 @@ bool PolarControl::loadAndRunFile(String filePath, float maxRho) {
     vTaskDelay(10);
     feedPlanner();
 
-    // Start the motion planner
-    m_planner.start();
-
     m_state = PREPARING;
     xSemaphoreGive(m_mutex);
     return true;
@@ -560,7 +557,10 @@ void PolarControl::feedPlanner() {
 
 bool PolarControl::processNextMove() {
     uint32_t waitStart = micros();
-    xSemaphoreTake(m_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(m_mutex, pdMS_TO_TICKS(5)) != pdTRUE) {
+        m_mutexWaitProfiler.addSample(micros() - waitStart);
+        return false;
+    }
     m_mutexWaitProfiler.addSample(micros() - waitStart);
 
     // Let planner process (handles timer internally)
