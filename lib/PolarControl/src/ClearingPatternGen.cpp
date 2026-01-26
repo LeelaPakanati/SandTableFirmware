@@ -1,5 +1,6 @@
 #include "ClearingPatternGen.hpp"
 #include "Logger.hpp"
+#include <algorithm>
 
 ClearingPatternGen::ClearingPatternGen(ClearingPattern pattern, float maxRho)
     : m_pattern(pattern),
@@ -45,6 +46,82 @@ PolarCord_t ClearingPatternGen::getNextPos() {
         default:
             m_complete = true;
             return {std::nan(""), std::nan("")};
+    }
+}
+
+int ClearingPatternGen::getProgressPercent() const {
+    if (m_complete) {
+        return 100;
+    }
+
+    switch (m_pattern) {
+        case CLEARING_NONE:
+            return -1;
+        case SPIRAL_OUTWARD:
+        case SPIRAL_INWARD: {
+            static constexpr float NUM_ROTATIONS = 32.0f;
+            static constexpr float TOTAL_THETA = NUM_ROTATIONS * 2.0f * PI;
+            float progress = (TOTAL_THETA > 0.0f) ? (m_currentTheta / TOTAL_THETA) : 0.0f;
+            progress = std::min(1.0f, std::max(0.0f, progress));
+            return static_cast<int>(lroundf(progress * 100.0f));
+        }
+        case CONCENTRIC_CIRCLES: {
+            static constexpr int NUM_CIRCLES = 14;
+            static constexpr float CIRCLE_THETA_MAX = 2.0f * PI;
+            if (m_circleIndex >= NUM_CIRCLES) {
+                return 100;
+            }
+            float thetaFrac = (CIRCLE_THETA_MAX > 0.0f) ? (m_currentTheta / CIRCLE_THETA_MAX) : 0.0f;
+            thetaFrac = std::min(1.0f, std::max(0.0f, thetaFrac));
+            float progress = (static_cast<float>(m_circleIndex) + thetaFrac) / NUM_CIRCLES;
+            progress = std::min(1.0f, std::max(0.0f, progress));
+            return static_cast<int>(lroundf(progress * 100.0f));
+        }
+        case ZIGZAG_RADIAL: {
+            static constexpr float Y_STEP = 16.0f;
+            static constexpr float X_STEP = 16.0f;
+            if (m_maxRho <= 0.0f) {
+                return -1;
+            }
+            int totalRows = static_cast<int>(std::floor((2.0f * m_maxRho) / Y_STEP)) + 1;
+            if (totalRows <= 0) {
+                return -1;
+            }
+            float y = -m_maxRho + (m_circleIndex * Y_STEP);
+            if (y > m_maxRho) {
+                return 100;
+            }
+            float xMax = std::sqrt(std::max(0.0f, (m_maxRho * m_maxRho) - (y * y)));
+            int maxSteps = 0;
+            if (X_STEP > 0.0f && xMax > 0.0f) {
+                maxSteps = static_cast<int>(std::floor((2.0f * xMax) / X_STEP));
+            }
+            float rowFrac = 0.0f;
+            if (maxSteps <= 0) {
+                rowFrac = 1.0f;
+            } else {
+                rowFrac = static_cast<float>(m_spokeIndex) / static_cast<float>(maxSteps);
+                rowFrac = std::min(1.0f, std::max(0.0f, rowFrac));
+            }
+            float progress = (static_cast<float>(m_circleIndex) + rowFrac) / totalRows;
+            progress = std::min(1.0f, std::max(0.0f, progress));
+            return static_cast<int>(lroundf(progress * 100.0f));
+        }
+        case PETAL_FLOWER: {
+            static constexpr int NUM_PASSES = 8;
+            static constexpr float PASS_THETA_MAX = 2.0f * PI;
+            if (m_circleIndex >= NUM_PASSES) {
+                return 100;
+            }
+            float thetaFrac = (PASS_THETA_MAX > 0.0f) ? (m_currentTheta / PASS_THETA_MAX) : 0.0f;
+            thetaFrac = std::min(1.0f, std::max(0.0f, thetaFrac));
+            float progress = (static_cast<float>(m_circleIndex) + thetaFrac) / NUM_PASSES;
+            progress = std::min(1.0f, std::max(0.0f, progress));
+            return static_cast<int>(lroundf(progress * 100.0f));
+        }
+        case CLEARING_RANDOM:
+        default:
+            return -1;
     }
 }
 

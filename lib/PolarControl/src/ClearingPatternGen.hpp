@@ -24,6 +24,7 @@ class ClearingPatternGen : public PosGen {
 public:
     ClearingPatternGen(ClearingPattern pattern, float maxRho = 450.0);
     PolarCord_t getNextPos() override;
+    int getProgressPercent() const override;
 
 private:
     ClearingPattern m_pattern;
