@@ -9,6 +9,11 @@ ESP32 firmware for a Sisyphus-style polar-coordinate sand table. It drives Theta
 - SD card pattern storage, uploads, and optional PNG previews.
 - OTA firmware updates and runtime telemetry.
 
+## Architecture
+At a high level the firmware is organized around three FreeRTOS tasks pinned across the two ESP32 cores. `src/main.cpp` creates a MotorTask on Core 1 for deterministic step generation, and a WebTask on Core 0 for the Web UI/API, WiFi, and OTA handling. `lib/PolarControl` owns the motion planner, driver configuration, and the inter-task queues. It also spins up a FileReadTask on Core 0 to stream `.thr` pattern points from SD/LittleFS into a coordinate queue. The MotorTask drains that queue and drives the stepper outputs, while the WebTask sends commands (start/stop/speed/tuning) and exposes telemetry back to the UI via SSE and JSON APIs.
+
+![Architecture diagram](docs/images/architecture-tasks.svg)
+
 ## Hardware
 - ESP32 dev board
 - 2x (or 3x) TMC2209 stepper drivers (UART)
@@ -75,12 +80,11 @@ File parsing ignores empty/comment lines. Lines longer than 127 characters are s
 ## File Storage Layout
 - Required: `/patterns/name/name.thr` and `/patterns/name/name.png`
 
-The Web UI accepts `.thr` plus optional `.png` uploads with the same base name.
+The Web UI accepts `.thr` plus optional `.png` uploads with the same base name. This png should be an image of the path produced by the thr with a white line and transparent backgroud. This will be overlayed on the webpage over the position viewer.
 
 ## Motion Planning
 - S-curve profiles per axis with synchronized segment durations.
 - Lookahead step generation into a queue to avoid underruns.
-- PREPARING state is used when a file is loading and the first coord has not arrived yet.
 
 ## Logging and Diagnostics
 - Serial logs include queue depth, underruns, timing stats, and state changes.
@@ -91,13 +95,3 @@ Native motion planner tests:
 ```bash
 pio run -e native
 ./run_all_tests.sh
-```
-
-## Directory Map
-```
-/        - firmware root
-lib/     - PolarControl, WebServer, SDCard, Playlist, LEDController
-src/     - main firmware entry
-scripts/ - helper scripts for upload/status
-test/    - native motion planner tests and pattern files
-```

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520">
+  <defs>
+    <style>
+      .title { font: 600 20px 'Arial', sans-serif; fill: #1f2933; }
+      .label { font: 14px 'Arial', sans-serif; fill: #1f2933; }
+      .small { font: 12px 'Arial', sans-serif; fill: #52616b; }
+      .box { fill: #f7f9fc; stroke: #233142; stroke-width: 1.5; rx: 10; ry: 10; }
+      .core { fill: #e3eefc; stroke: #1d4b8f; stroke-width: 2; rx: 14; ry: 14; }
+      .arrow { stroke: #1f2933; stroke-width: 1.5; marker-end: url(#arrow); }
+      .dashed { stroke-dasharray: 6 4; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#1f2933" />
+    </marker>
+  </defs>
+
+  <text x="30" y="36" class="title">Sisyphus Table: Core Task Split</text>
+
+  <rect x="40" y="70" width="470" height="400" class="core" />
+  <text x="60" y="105" class="label">Core 0 (System / UI / IO)</text>
+
+  <rect x="70" y="130" width="410" height="90" class="box" />
+  <text x="90" y="160" class="label">WebTask</text>
+  <text x="90" y="182" class="small">SisyphusWebServer + API</text>
+  <text x="90" y="202" class="small">WiFi + OTA + UI updates</text>
+
+  <rect x="70" y="245" width="410" height="90" class="box" />
+  <text x="90" y="275" class="label">FileReadTask</text>
+  <text x="90" y="297" class="small">Streams .thr points from SD/LittleFS</text>
+  <text x="90" y="317" class="small">Fills coordinate queue</text>
+
+  <rect x="70" y="360" width="410" height="80" class="box" />
+  <text x="90" y="390" class="label">Storage + Network</text>
+  <text x="90" y="412" class="small">SD card, LittleFS, WiFi</text>
+
+  <rect x="590" y="70" width="470" height="400" class="core" />
+  <text x="610" y="105" class="label">Core 1 (Real-time Motion)</text>
+
+  <rect x="620" y="145" width="410" height="110" class="box" />
+  <text x="640" y="175" class="label">MotorTask</text>
+  <text x="640" y="197" class="small">PolarControl::processNextMove</text>
+  <text x="640" y="217" class="small">Motion planner + step generation</text>
+
+  <rect x="620" y="290" width="410" height="110" class="box" />
+  <text x="640" y="320" class="label">Stepper Drivers</text>
+  <text x="640" y="342" class="small">Theta / Rho TMC2209</text>
+  <text x="640" y="362" class="small">Step/Dir outputs</text>
+
+  <line x1="480" y1="175" x2="620" y2="175" class="arrow" />
+  <text x="470" y="160" class="small" text-anchor="end">Commands (start/stop/speed)</text>
+
+  <line x1="480" y1="290" x2="620" y2="290" class="arrow" />
+  <text x="470" y="275" class="small" text-anchor="end">Coord queue (theta, rho)</text>
+
+  <line x1="620" y1="210" x2="480" y2="210" class="arrow dashed" />
+  <text x="470" y="230" class="small" text-anchor="end">Telemetry + status</text>
+
+  <line x1="275" y1="220" x2="275" y2="245" class="arrow" />
+  <text x="285" y="238" class="small">Pattern load</text>
+
+  <line x1="275" y1="335" x2="275" y2="360" class="arrow" />
+  <text x="285" y="357" class="small">File IO</text>
+</svg>
