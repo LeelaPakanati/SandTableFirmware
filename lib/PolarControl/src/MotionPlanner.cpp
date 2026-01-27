@@ -519,8 +519,9 @@ void MotionPlanner::process() {
     if (m_startupHoldoff) {
         bool queueFull = (queueDepth >= (STEP_QUEUE_SIZE - 1));
         bool horizonReached = (lastStopReason == FillStopReason::Horizon);
+        bool hasData = (queueDepth > 0);
 
-        if (queueFull || horizonReached) {
+        if (queueFull || (horizonReached && hasData)) {
             m_startupHoldoff = false;
         }
     }
