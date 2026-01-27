@@ -413,7 +413,7 @@ bool PolarControl::stop() {
         cmd.type = FileCommand::CMD_STOP;
         xQueueSend(m_cmdQueue, &cmd, 0);
 
-        m_planner.stop();
+        m_planner.stopGracefully();
 
         if (m_state == CLEARING && m_clearingSpeedActive) {
             m_clearingSpeedActive = false;
@@ -631,7 +631,7 @@ void PolarControl::setThetaDriverSettings(const DriverSettings& settings) {
     m_tDriverSettings = settings;
     applyDriverSettings(m_tDriver, m_tDriverSettings);
 
-    // Reinitialize planner if microsteps changed
+    // Reinitialize planner if microsteps changed (keep position)
     m_planner.init(
         getStepsPerMm(),
         getStepsPerRadian(),
@@ -641,7 +641,8 @@ void PolarControl::setThetaDriverSettings(const DriverSettings& settings) {
         m_motionSettings.rMaxJerk,
         m_motionSettings.tMaxVelocity,
         m_motionSettings.tMaxAccel,
-        m_motionSettings.tMaxJerk
+        m_motionSettings.tMaxJerk,
+        false
     );
 
     LOG("Theta driver settings updated\r\n");
@@ -654,7 +655,7 @@ void PolarControl::setRhoDriverSettings(const DriverSettings& settings) {
     applyDriverSettings(m_rDriver, m_rDriverSettings);
     applyDriverSettings(m_rCDriver, m_rDriverSettings);
 
-    // Reinitialize planner if microsteps changed
+    // Reinitialize planner if microsteps changed (keep position)
     m_planner.init(
         getStepsPerMm(),
         getStepsPerRadian(),
@@ -664,7 +665,8 @@ void PolarControl::setRhoDriverSettings(const DriverSettings& settings) {
         m_motionSettings.rMaxJerk,
         m_motionSettings.tMaxVelocity,
         m_motionSettings.tMaxAccel,
-        m_motionSettings.tMaxJerk
+        m_motionSettings.tMaxJerk,
+        false
     );
 
     LOG("Rho driver settings updated\r\n");

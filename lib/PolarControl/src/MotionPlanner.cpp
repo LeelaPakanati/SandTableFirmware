@@ -62,7 +62,8 @@ MotionPlanner::~MotionPlanner() {
 
 void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
                          float rMaxVel, float rMaxAccel, float rMaxJerk,
-                         float tMaxVel, float tMaxAccel, float tMaxJerk) {
+                         float tMaxVel, float tMaxAccel, float tMaxJerk,
+                         bool resetPosition) {
     m_stepsPerMmR = stepsPerMmR;
     m_stepsPerRadT = stepsPerRadT;
     m_maxRho = maxRho;
@@ -84,13 +85,15 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
     FastGPIO::setLow(T_STEP_PIN);
     FastGPIO::setLow(R_STEP_PIN);
 
-    // Reset positions
-    m_queuedTSteps = 0;
-    m_queuedRSteps = 0;
-    m_executedTSteps = 0;
-    m_executedRSteps = 0;
-    m_targetTheta = 0.0f;
-    m_targetRho = 0.0f;
+    // Reset positions only if requested
+    if (resetPosition) {
+        m_queuedTSteps = 0;
+        m_queuedRSteps = 0;
+        m_executedTSteps = 0;
+        m_executedRSteps = 0;
+        m_targetTheta = 0.0f;
+        m_targetRho = 0.0f;
+    }
 
     // Reset buffer
     m_segmentHead = 0;
@@ -298,6 +301,25 @@ void MotionPlanner::recalculate() {
             // Set initial exit velocities to max (will be constrained in backward pass)
             seg.thetaExitVel = tMaxVel;
             seg.rhoExitVel = rMaxVel;
+
+            // Constrain exit velocity based on what is achievable from entry velocity (Forward Pass)
+            float thetaDist = fabsf(seg.theta.deltaUnits);
+            if (thetaDist > 0.0001f) {
+                float maxExit = SCurve::maxAchievableExitVelocity(
+                    thetaDist, seg.thetaEntryVel, tMaxVel, m_tMaxAccel, m_tMaxJerk);
+                if (seg.thetaExitVel > maxExit) {
+                    seg.thetaExitVel = maxExit;
+                }
+            }
+
+            float rhoDist = fabsf(seg.rho.deltaUnits);
+            if (rhoDist > 0.0001f) {
+                float maxExit = SCurve::maxAchievableExitVelocity(
+                    rhoDist, seg.rhoEntryVel, rMaxVel, m_rMaxAccel, m_rMaxJerk);
+                if (seg.rhoExitVel > maxExit) {
+                    seg.rhoExitVel = maxExit;
+                }
+            }
         }
 
         prevThetaVel = seg.thetaExitVel;
@@ -407,6 +429,128 @@ void MotionPlanner::recalculate() {
         }
         idx = (idx + 1) % SEGMENT_BUFFER_SIZE;
     }
+}
+
+void MotionPlanner::stopGracefully() {
+    if (!m_running || isIdle()) {
+        stop();
+        return;
+    }
+
+    // 1. Identify current generation state
+    // Note: m_genSegmentIdx points to the segment we are currently generating steps for
+    // or about to generate steps for.
+    Segment& currentGen = m_segments[m_genSegmentIdx];
+    
+    // If current segment hasn't started generating, we can just clear buffer
+    if (currentGen.lastGenTime < 0.000001f) {
+        m_segmentHead = m_genSegmentIdx; // Keep it as head? No, discard it.
+        // Actually if we haven't generated anything for it, we are effectively at the end
+        // of the previous segment (which is fully generated).
+        // So we can just clear everything after the previous segment.
+        m_segmentHead = m_genSegmentIdx;
+        m_endOfPattern = true;
+        recalculate();
+        return;
+    }
+
+    // 2. Calculate current velocities at the point of interruption
+    float vTheta = 0.0f;
+    float vRho = 0.0f;
+    
+    // Need to use the profile to get velocity at lastGenTime
+    // Note: Profiles calculate positive speed. Need direction.
+    
+    float t = currentGen.lastGenTime;
+    
+    if (currentGen.theta.profile.totalDistance > 0.0f) {
+        float pt = t / currentGen.theta.timeScale;
+        float v = SCurve::getVelocity(currentGen.theta.profile, pt) / currentGen.theta.timeScale;
+        vTheta = v * static_cast<float>(currentGen.theta.direction);
+    }
+    
+    if (currentGen.rho.profile.totalDistance > 0.0f) {
+        float pt = t / currentGen.rho.timeScale;
+        float v = SCurve::getVelocity(currentGen.rho.profile, pt) / currentGen.rho.timeScale;
+        vRho = v * static_cast<float>(currentGen.rho.direction);
+    }
+
+    // 3. Update queued positions to match where we are interrupting
+    m_queuedTSteps.store(currentGen.lastGenThetaSteps);
+    m_queuedRSteps.store(currentGen.lastGenRhoSteps);
+
+    // Update target steps of the terminated segment so next segment chains correctly
+    // (addSegment uses the previous segment's target as start)
+    currentGen.theta.targetSteps = currentGen.lastGenThetaSteps;
+    currentGen.rho.targetSteps = currentGen.lastGenRhoSteps;
+
+    // 4. Terminate the current segment
+    // We force it to be "complete" so fillStepQueue moves on
+    currentGen.duration = t; 
+    currentGen.generationComplete = true;
+    
+    // 5. Reset buffer pointers to discard future segments
+    // The current segment becomes the tail (it's done generating)
+    // The head moves to the next slot, which will be our braking segment
+    m_segmentHead = (m_genSegmentIdx + 1) % SEGMENT_BUFFER_SIZE;
+    
+    // 6. Calculate stopping distances
+    // Apply speed multiplier to limits? 
+    // Limits in planner are raw. m_speedMultiplier is applied during calculation.
+    // SCurve::decelerationDistance needs RAW limits if we are passing RAW velocity?
+    // Wait, vTheta is RAW velocity (physical units).
+    // We want to stop using current limits.
+    // Recalculate will apply multiplier. We just need a target.
+    
+    float tMaxAccel = m_tMaxAccel * m_speedMultiplier; // Approx
+    float rMaxAccel = m_rMaxAccel * m_speedMultiplier;
+    float tMaxJerk = m_tMaxJerk; // Jerk usually not scaled by speed mult in this codebase?
+    float rMaxJerk = m_rMaxJerk;
+    
+    // Note: SCurve::decelerationDistance(vStart, vEnd, ...)
+    // vStart is signed? No, SCurve usually deals with magnitudes for distance calc?
+    // SCurve::decelerationDistance(vStart, vEnd) assumes positive.
+    
+    float stopDistT = SCurve::decelerationDistance(fabsf(vTheta), 0.0f, tMaxAccel, tMaxJerk);
+    float stopDistR = SCurve::decelerationDistance(fabsf(vRho), 0.0f, rMaxAccel, rMaxJerk);
+    
+    // 7. Calculate target position
+    // Direction of stop is same as velocity
+    float dirT = (vTheta > 0) ? 1.0f : -1.0f;
+    float dirR = (vRho > 0) ? 1.0f : -1.0f;
+    
+    float targetT = stepsToTheta(m_queuedTSteps) + stopDistT * dirT;
+    float targetR = stepsToRho(m_queuedRSteps) + stopDistR * dirR;
+    
+    // 8. Add the braking segment
+    // This adds it at m_segmentHead
+    addSegment(targetT, targetR);
+    
+    // 9. Force velocity continuity
+    // The segment we just added is at the slot BEFORE m_segmentHead (circularly)
+    int brakeIdx = (m_segmentHead - 1 + SEGMENT_BUFFER_SIZE) % SEGMENT_BUFFER_SIZE;
+    Segment& brakeSeg = m_segments[brakeIdx];
+    
+    // We manually set entry velocity so recalculate() picks it up
+    // Note: recalculate() does a forward pass. 
+    // It normally takes prev segment exit velocity.
+    // The "prev segment" is currentGen (at m_genSegmentIdx).
+    // So we should set currentGen exit velocity.
+    
+    currentGen.thetaExitVel = fabsf(vTheta);
+    currentGen.rhoExitVel = fabsf(vRho);
+    
+    // We also need to fix direction for velocity matching logic?
+    // recalculate() checks for direction reversal.
+    // brakeSeg direction should match vTheta direction (since we planned it that way).
+    // So thetaReverses should be false.
+    // Thus brakeSeg.thetaEntryVel will be min(prevExit, max).
+    // prevExit is what we just set.
+    // So it should work!
+    
+    // 10. Finalize
+    m_endOfPattern = true;
+    recalculate();
 }
 
 void MotionPlanner::start() {

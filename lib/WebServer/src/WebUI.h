@@ -216,6 +216,10 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             height: 100%;
         }
 
+        #pattern-overlay { z-index: 1; }
+        #path-canvas { z-index: 2; }
+        #ball-canvas { z-index: 3; }
+
         .position-display {
             text-align: center;
             font-family: 'SF Mono', Monaco, 'Courier New', monospace;
@@ -934,8 +938,8 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             <div class="viewer-wrapper">
                 <div class="canvas-container">
                     <div class="canvas-inner">
-                        <canvas id="path-canvas" class="viewer-canvas" width="800" height="800"></canvas>
                         <img id="pattern-overlay" class="viewer-canvas" style="object-fit: cover; opacity: 0.6; display: none;" src="" onerror="this.style.display='none'">
+                        <canvas id="path-canvas" class="viewer-canvas" width="800" height="800"></canvas>
                         <canvas id="ball-canvas" class="viewer-canvas" width="800" height="800"></canvas>
                     </div>
                 </div>
@@ -1250,7 +1254,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 if (this.lastX !== undefined) {
                     const ctx = this.ctxPath;
                     ctx.strokeStyle = 'rgba(42, 37, 32, 0.8)';
-                    ctx.lineWidth = 3;
+                    ctx.lineWidth = 5;
                     ctx.lineCap = 'round';
                     ctx.beginPath();
                     ctx.moveTo(this.lastX, this.lastY);

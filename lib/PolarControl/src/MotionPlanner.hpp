@@ -115,7 +115,8 @@ public:
     // tMaxVel/tMaxAccel/tMaxJerk: theta limits (rad/s, rad/s², rad/s³)
     void init(int stepsPerMmR, int stepsPerRadT, float maxRho,
               float rMaxVel, float rMaxAccel, float rMaxJerk,
-              float tMaxVel, float tMaxAccel, float tMaxJerk);
+              float tMaxVel, float tMaxAccel, float tMaxJerk,
+              bool resetPosition = true);
 
     // Add a segment to the buffer (returns false if buffer full)
     bool addSegment(float theta, float rho);
@@ -128,6 +129,9 @@ public:
 
     // Stop motion execution (decelerate to stop)
     void stop();
+
+    // Gracefully stop motion by interrupting current segment and decelerating to zero
+    void stopGracefully();
 
     // Main processing loop - call frequently (~50Hz or faster)
     // Fills the step queue and manages segment transitions
