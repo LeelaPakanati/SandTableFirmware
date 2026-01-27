@@ -160,6 +160,11 @@ void SisyphusWebServer::begin(PolarControl *polarControl, LEDController *ledCont
         handleErrors(request);
     });
 
+    m_server.on("/api/errors/clear", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        noteRequest(request);
+        handleErrorsClear(request);
+    });
+
     m_server.on("/api/pattern/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
         noteRequest(request);
         handlePatternStart(request);
@@ -846,6 +851,15 @@ void SisyphusWebServer::handleErrors(AsyncWebServerRequest *request) {
     ErrorLog::instance().writeJson(printer);
     m_errorsCacheAt = now;
     request->send(200, "application/json", m_errorsCache);
+}
+
+void SisyphusWebServer::handleErrorsClear(AsyncWebServerRequest *request) {
+    ErrorLog::instance().clear();
+    m_errorsCache = "";
+    m_errorsTotal = 0;
+    m_errorsDropped = 0;
+    m_errorsSize = 0;
+    request->send(200, "application/json", "{\"success\":true}");
 }
 
 void SisyphusWebServer::handlePatternStart(AsyncWebServerRequest *request) {

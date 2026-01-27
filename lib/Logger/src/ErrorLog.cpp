@@ -49,6 +49,15 @@ void ErrorLog::log(const char* level, const char* category, const char* code,
     unlock();
 }
 
+void ErrorLog::clear() {
+    lock();
+    m_head = 0;
+    m_size = 0;
+    m_total = 0;
+    m_dropped = 0;
+    unlock();
+}
+
 uint32_t ErrorLog::totalCount() const {
     lock();
     uint32_t total = m_total;

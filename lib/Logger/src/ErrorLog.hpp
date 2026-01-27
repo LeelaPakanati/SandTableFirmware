@@ -24,6 +24,7 @@ public:
     static ErrorLog& instance();
     void log(const char* level, const char* category, const char* code,
              const char* message, const char* context = nullptr);
+    void clear();
     uint32_t totalCount() const;
     uint32_t droppedCount() const;
     uint32_t size() const;

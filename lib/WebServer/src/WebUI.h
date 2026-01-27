@@ -1072,7 +1072,10 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
         </div>
 
         <div class="card">
-            <div class="card-title">Error Log</div>
+            <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                Error Log
+                <button class="btn-secondary" id="btn-clear-errors" style="flex: none; padding: 4px 12px; font-size: 0.75em; border-radius: 8px;">Clear</button>
+            </div>
             <div class="error-log-meta">
                 <span><span id="error-log-count">0</span> errors since boot</span>
                 <span id="error-log-dropped" style="display: none;">Dropped: 0</span>
@@ -1318,6 +1321,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('btn-add-to-playlist').addEventListener('click', () => this.addToPlaylist());
                 document.getElementById('btn-add-all-to-playlist').addEventListener('click', () => this.addAllToPlaylist());
                 document.getElementById('btn-clear-playlist').addEventListener('click', () => this.clearPlaylist());
+                document.getElementById('btn-clear-errors').addEventListener('click', () => this.clearErrors());
                 document.getElementById('btn-playlist-start').addEventListener('click', () => { this.clearPath(); this.startPlaylist(); });
                 document.getElementById('btn-playlist-stop').addEventListener('click', () => this.stopPlaylist());
                 document.getElementById('btn-playlist-prev').addEventListener('click', () => this.playlistPrev());
@@ -1753,6 +1757,13 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 if (!confirm('Clear playlist?')) return;
                 await fetch(this.apiBase + '/playlist/clear', { method: 'POST' });
                 await this.loadPlaylistStatus();
+            }
+
+            async clearErrors() {
+                if (!confirm('Clear all error logs?')) return;
+                await fetch(this.apiBase + '/errors/clear', { method: 'POST' });
+                const errors = await this.getErrors();
+                this.updateErrorUI(errors);
             }
 
             async startPlaylist() {

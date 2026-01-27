@@ -47,6 +47,7 @@ private:
     void handlePosition(AsyncWebServerRequest *request);
     void handleStatus(AsyncWebServerRequest *request);
     void handleErrors(AsyncWebServerRequest *request);
+    void handleErrorsClear(AsyncWebServerRequest *request);
     void handlePatternStart(AsyncWebServerRequest *request);
     void handlePatternStop(AsyncWebServerRequest *request);
     void handlePatternPause(AsyncWebServerRequest *request);
