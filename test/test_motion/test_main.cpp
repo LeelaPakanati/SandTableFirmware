@@ -296,7 +296,7 @@ bool testDirectionReversal() {
     int iterations = 0;
     int maxIterations = 50000;
 
-    while (planner.isRunning() && iterations < maxIterations) {
+    while ((planner.isRunning() || !planner.isIdle()) && iterations < maxIterations) {
         planner.process();
         advanceMicros(20000);
         iterations++;

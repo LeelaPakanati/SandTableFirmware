@@ -16,6 +16,8 @@ static constexpr uint32_t STEP_PULSE_WIDTH_US = 2;
 // Direction setup time before step pulse
 static constexpr uint32_t DIR_SETUP_TIME_US = 1;
 
+static constexpr uint8_t STOP_MASK = 0x80;
+
 MotionPlanner::MotionPlanner()
     : m_stepsPerMmR(100)
     , m_stepsPerRadT(3000)
@@ -98,6 +100,7 @@ void MotionPlanner::init(int stepsPerMmR, int stepsPerRadT, float maxRho,
     m_stepQueueHead = 0;
     m_stepQueueTail = 0;
     m_completedCount = 0;
+    m_stopEventQueued = false;
     m_underrunCount.store(0);
     m_consecutiveUnderruns.store(0);
     m_maxConsecutiveUnderruns.store(0);
@@ -108,6 +111,8 @@ bool MotionPlanner::addSegment(float theta, float rho) {
     if (!hasSpace()) {
         return false;
     }
+
+    m_stopEventQueued = false;
 
     // Clamp rho to valid range
     rho = std::max(0.0f, std::min(rho, m_maxRho));
@@ -424,6 +429,7 @@ void MotionPlanner::start() {
     m_segmentElapsed = 0.0f;
 
     m_startupHoldoff = true;
+    m_stopEventQueued = false;
     
     // Initialize generation state
     m_genSegmentIdx = m_segmentTail;
@@ -456,6 +462,7 @@ void MotionPlanner::stop() {
 
     // Reset pattern state
     m_endOfPattern = false;
+    m_stopEventQueued = false;
 
     // Sync queued positions with executed positions so next pattern
     // starts from current actual position
@@ -479,23 +486,23 @@ void MotionPlanner::process() {
     }
     m_lastProcessTime = now;
 
-    if (!m_running) return;
+    // If manually stopped (running=false and no segments), do nothing
+    if (!m_running && m_segmentHead == m_segmentTail) return;
 
-    // 1. Generation Loop
-    // Fill once per call; fillStepQueue will span segments until horizon or queue full.
+    // 1. Generation Loop (only if running)
     int queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
     if (queueDepth < 0) queueDepth = 0;
     
     FillStopReason lastStopReason = FillStopReason::None;
     
-    if (m_genSegmentIdx != m_segmentHead) {
+    if (m_running && m_genSegmentIdx != m_segmentHead) {
         lastStopReason = fillStepQueue(STEP_QUEUE_HORIZON_US);
         queueDepth = STEP_QUEUE_SIZE - 1 - getStepQueueSpace();
         if (queueDepth < 0) queueDepth = 0;
     }
 
     // If we have segments but none are executing, start the first one
-    if (m_segmentHead != m_segmentTail && !m_segments[m_segmentTail].executing) {
+    if (m_running && m_segmentHead != m_segmentTail && !m_segments[m_segmentTail].executing) {
         // First segment start - use current time
         // Note: m_segmentStartTime was already set in start(), but if we added 
         // segments after start() while idle, we need to update it.
@@ -519,7 +526,7 @@ void MotionPlanner::process() {
     }
 
     // Auto-start timer if buffer has any data and startup holdoff is cleared
-    if (!m_timerActive && !m_startupHoldoff) {
+    if (!m_timerActive && !m_startupHoldoff && m_running) {
         if (queueDepth > 0) {
             esp_timer_start_periodic((esp_timer_handle_t)m_timerHandle, STEP_TIMER_PERIOD_US);
             m_timerActive = true;
@@ -565,7 +572,8 @@ void MotionPlanner::process() {
             m_segmentElapsed = 0.0f;
 
             // Start next segment immediately if available
-            if (m_segmentHead != m_segmentTail) {
+            // If stopped by sentinel (m_running=false), we don't start new segments unless manual restart
+            if (m_segmentHead != m_segmentTail && m_running) {
                 m_segments[m_segmentTail].executing = true;
                 
                 // If we fell behind in generation (underrun recovery), 
@@ -753,6 +761,13 @@ FillStopReason MotionPlanner::fillStepQueue(uint32_t horizonUs) {
             seg.generationComplete = true;
             m_genSegmentStartTime += (uint32_t)(seg.duration * 1000000.0f);
             m_genSegmentIdx = (m_genSegmentIdx + 1) % SEGMENT_BUFFER_SIZE;
+
+            // If we just finished the last segment of the pattern, queue a stop event
+            if (m_genSegmentIdx == m_segmentHead && m_endOfPattern && !m_stopEventQueued) {
+                if (queueStepEvent(m_genSegmentStartTime, STOP_MASK, 0)) {
+                    m_stopEventQueued = true;
+                }
+            }
             continue;
         }
 
@@ -1000,6 +1015,18 @@ void IRAM_ATTR MotionPlanner::handleStepTimer() {
     int32_t timeDiff = (int32_t)(event.executeTime - now);
     if (timeDiff > 0 && timeDiff < 1000000) {
         return;  // Not yet time
+    }
+
+    // Check for STOP sentinel
+    if (event.stepMask & STOP_MASK) {
+        m_running = false;
+        m_timerActive = false;
+        if (m_timerHandle != nullptr) {
+            esp_timer_stop((esp_timer_handle_t)m_timerHandle);
+        }
+        // Consume event
+        m_stepQueueTail = (m_stepQueueTail + 1) % STEP_QUEUE_SIZE;
+        return;
     }
 
     // Set direction pins first

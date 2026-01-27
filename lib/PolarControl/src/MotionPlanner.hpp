@@ -235,6 +235,7 @@ private:
     bool m_running;
     bool m_timerActive = false;
     bool m_endOfPattern;
+    bool m_stopEventQueued = false;
     uint32_t m_completedCount;
     bool m_startupHoldoff = false;
 
