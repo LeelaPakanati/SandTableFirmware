@@ -899,12 +899,6 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             <a href="/tuning" class="nav-link">Tuning</a>
         </nav>
 
-        <div id="error-banner" class="error-banner" style="display: none;">
-            <span class="error-banner-title">Errors detected</span>
-            <span class="error-banner-count" id="error-banner-count">0</span>
-            <span id="error-banner-text">No errors reported</span>
-        </div>
-
         <div class="card">
             <div class="card-title">Status</div>
             <div class="status-grid">
@@ -1644,14 +1638,11 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             }
 
             updateErrorUI(data) {
-                const banner = document.getElementById('error-banner');
-                const bannerText = document.getElementById('error-banner-text');
-                const bannerCount = document.getElementById('error-banner-count');
                 const logContainer = document.getElementById('error-log');
                 const logCount = document.getElementById('error-log-count');
                 const droppedEl = document.getElementById('error-log-dropped');
 
-                if (!banner || !logContainer || !logCount) return;
+                if (!logContainer || !logCount) return;
 
                 const errors = (data && data.errors) ? data.errors : [];
                 const total = data && data.total !== undefined ? data.total : errors.length;
@@ -1668,19 +1659,9 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 }
 
                 if (errors.length === 0) {
-                    banner.style.display = 'none';
                     logContainer.innerHTML = '<div class="error-empty">No errors since boot.</div>';
                     return;
                 }
-
-                const latest = errors[errors.length - 1];
-                const latestText = latest.code
-                    ? `${latest.code}: ${latest.message}`
-                    : latest.message;
-                const latestContext = latest.context ? ` - ${latest.context}` : '';
-                bannerText.textContent = latestText + latestContext;
-                bannerCount.textContent = `${total}`;
-                banner.style.display = 'flex';
 
                 logContainer.innerHTML = '';
                 for (let i = errors.length - 1; i >= 0; i--) {
